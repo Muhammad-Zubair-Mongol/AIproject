@@ -8,14 +8,14 @@ pub struct AudioState {
     pub is_recording: Mutex<bool>,
     pub stream_control: Mutex<Option<Sender<()>>>,
     pub audio_tx: Mutex<Option<Sender<Vec<f32>>>>,
-    pub current_volume: Arc<Mutex<f32>>,  // Arc for thread sharing
+    pub current_volume: Arc<Mutex<f32>>,
     pub capture_mode: Mutex<CaptureMode>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum CaptureMode {
     MicOnly,
-    SystemOnly,
+    SystemOnly,  // WASAPI Loopback on Windows
     Both,
 }
 
@@ -31,33 +31,42 @@ impl Default for AudioState {
     }
 }
 
-// Constants for Station 1 compliance
 const TARGET_SAMPLE_RATE: u32 = 16000;
-const MICRO_CHUNK_SAMPLES: usize = 160; // ~10ms at 16kHz = 160 samples
-const SILENCE_THRESHOLD: f32 = 0.01; // RMS below this = silence
-const SILENCE_SKIP_CHUNKS: usize = 30; // Skip after 30 silent chunks (~300ms)
+const MICRO_CHUNK_SAMPLES: usize = 160;
+const SILENCE_THRESHOLD: f32 = 0.01;
+const SILENCE_SKIP_CHUNKS: usize = 30;
 
 #[tauri::command]
 pub fn list_audio_devices() -> Result<Vec<String>, String> {
-    let host = cpal::default_host();
     let mut names = Vec::new();
-
-    names.push("--- Input Devices (Microphone) ---".to_string());
+    
+    // Default host devices
+    let host = cpal::default_host();
+    names.push(format!("Host: {}", host.id().name()));
+    
+    names.push("--- Microphones ---".to_string());
     if let Ok(devices) = host.input_devices() {
         for device in devices {
             if let Ok(name) = device.name() {
-                names.push(format!("[MIC] {}", name));
+                names.push(format!("  🎤 {}", name));
             }
         }
     }
-
-    names.push("--- Output Devices (System Audio Loopback) ---".to_string());
+    
+    names.push("--- Output Devices ---".to_string());
     if let Ok(devices) = host.output_devices() {
         for device in devices {
             if let Ok(name) = device.name() {
-                names.push(format!("[SYS] {}", name));
+                names.push(format!("  🔊 {}", name));
             }
         }
+    }
+    
+    // Check WASAPI availability (Windows only)
+    #[cfg(target_os = "windows")]
+    {
+        names.push("--- WASAPI Loopback ---".to_string());
+        names.push("  ✓ Available for System Audio Capture".to_string());
     }
     
     Ok(names)
@@ -66,13 +75,15 @@ pub fn list_audio_devices() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn set_capture_mode(state: tauri::State<'_, AudioState>, mode: String) -> Result<String, String> {
     let mut capture_mode = state.capture_mode.lock().map_err(|e| e.to_string())?;
-    *capture_mode = match mode.as_str() {
+    let new_mode = match mode.as_str() {
         "mic" => CaptureMode::MicOnly,
         "system" => CaptureMode::SystemOnly,
         "both" => CaptureMode::Both,
-        _ => return Err("Invalid mode. Use: mic, system, or both".to_string()),
+        _ => return Err("Invalid mode".to_string()),
     };
-    Ok(format!("Capture mode set to: {}", mode))
+    *capture_mode = new_mode;
+    println!("[AUDIO] Capture mode: {:?}", new_mode);
+    Ok(format!("Mode: {:?}", new_mode))
 }
 
 #[tauri::command]
@@ -82,30 +93,20 @@ pub fn get_current_volume(state: tauri::State<'_, AudioState>) -> Result<f32, St
 }
 
 fn calculate_rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum_squares: f32 = samples.iter().map(|s| s * s).sum();
-    (sum_squares / samples.len() as f32).sqrt()
+    if samples.is_empty() { return 0.0; }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
-fn list_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
+fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
     data.chunks(channels as usize)
-        .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+        .map(|ch| ch.iter().sum::<f32>() / channels as f32)
         .collect()
 }
 
-// Decimate audio from input rate to 16kHz
-fn decimate_to_16k(samples: Vec<f32>, input_rate: u32) -> Vec<f32> {
-    if input_rate == TARGET_SAMPLE_RATE {
-        return samples;
-    }
-    
-    let factor = input_rate / TARGET_SAMPLE_RATE;
-    if factor == 0 {
-        return samples;
-    }
-    
+fn decimate(samples: Vec<f32>, from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate { return samples; }
+    let factor = from_rate / to_rate;
+    if factor == 0 { return samples; }
     samples.into_iter().step_by(factor as usize).collect()
 }
 
@@ -122,180 +123,179 @@ pub fn start_audio_capture(state: tauri::State<'_, AudioState>) -> Result<String
         *control = Some(stop_tx);
     }
     
-    let audio_tx = {
-        let tx_lock = state.audio_tx.lock().map_err(|e| e.to_string())?;
-        tx_lock.clone()
-    };
+    let audio_tx = state.audio_tx.lock().map_err(|e| e.to_string())?.clone();
+    let capture_mode = *state.capture_mode.lock().map_err(|e| e.to_string())?;
+    let volume = state.current_volume.clone();
 
-    let capture_mode = {
-        let mode = state.capture_mode.lock().map_err(|e| e.to_string())?;
-        *mode
-    };
-
-    // Clone the volume Arc for thread sharing
-    let volume_for_thread = state.current_volume.clone();
+    println!("[AUDIO] Starting capture. Mode: {:?}", capture_mode);
 
     thread::spawn(move || {
-        let host = cpal::default_host();
+        let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+        let silence_count: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
         
-        // Accumulator for micro-chunking
-        let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(MICRO_CHUNK_SAMPLES * 4)));
-        let silence_counter: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-        
-        // --- MICROPHONE STREAM ---
+        // === MICROPHONE CAPTURE ===
         let mic_stream = if capture_mode == CaptureMode::MicOnly || capture_mode == CaptureMode::Both {
+            let host = cpal::default_host();
             if let Some(device) = host.default_input_device() {
-                println!("[STATION 1] Mic device: {}", device.name().unwrap_or_default());
-                let config = device.default_input_config().unwrap();
-                let channels = config.channels();
-                let sample_rate = config.sample_rate().0;
+                let name = device.name().unwrap_or_default();
+                println!("[AUDIO] Mic: {}", name);
                 
-                let tx = audio_tx.clone();
-                let buffer = chunk_buffer.clone();
-                let silence = silence_counter.clone();
-                let vol = volume_for_thread.clone();
-                
-                let stream = device.build_input_stream(
-                    &config.into(),
-                    move |data: &[f32], _: &_| {
-                        if data.is_empty() { return; }
-                        
-                        // Mono downmix
-                        let mono = list_to_mono(data, channels);
-                        
-                        // Decimate to 16kHz
-                        let resampled = decimate_to_16k(mono, sample_rate);
-                        
-                        // Calculate volume for UI
-                        let rms = calculate_rms(&resampled);
-                        if let Ok(mut v) = vol.lock() {
-                            *v = rms;
-                        }
-                        
-                        // Silence detection
-                        let is_silent = rms < SILENCE_THRESHOLD;
-                        
-                        if let Ok(mut count) = silence.lock() {
-                            if is_silent {
-                                *count += 1;
-                                if *count > SILENCE_SKIP_CHUNKS {
-                                    return; // Skip this chunk
-                                }
-                            } else {
-                                *count = 0; // Reset on speech
-                            }
-                        }
-                        
-                        // Micro-chunking: accumulate and send in small chunks
-                        if let Ok(mut buf) = buffer.lock() {
-                            buf.extend(resampled);
-                            
-                            // Send micro-chunks
-                            while buf.len() >= MICRO_CHUNK_SAMPLES {
-                                let chunk: Vec<f32> = buf.drain(..MICRO_CHUNK_SAMPLES).collect();
-                                if let Some(ref tx) = tx {
-                                    let _ = tx.send(chunk);
-                                }
-                            }
-                        }
-                    },
-                    |err| eprintln!("[STATION 1] Mic error: {}", err),
-                    None
-                ).ok();
-                stream
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // --- SYSTEM AUDIO LOOPBACK STREAM (Windows WASAPI) ---
-        let loopback_stream = if capture_mode == CaptureMode::SystemOnly || capture_mode == CaptureMode::Both {
-            // On Windows, we can use output device with loopback
-            // Note: This requires running as admin or proper audio permissions
-            if let Some(device) = host.default_output_device() {
-                println!("[STATION 1] System audio device: {}", device.name().unwrap_or_default());
-                
-                // Try to build an input stream from the output device (loopback)
-                if let Ok(config) = device.default_output_config() {
+                if let Ok(config) = device.default_input_config() {
                     let channels = config.channels();
                     let sample_rate = config.sample_rate().0;
                     
                     let tx = audio_tx.clone();
-                    let buffer = chunk_buffer.clone();
-                    let silence = silence_counter.clone();
+                    let buf = buffer.clone();
+                    let sil = silence_count.clone();
+                    let vol = volume.clone();
                     
-                    // Attempt loopback - this may fail on some systems
                     let stream = device.build_input_stream(
                         &config.into(),
-                        move |data: &[f32], _: &_| {
+                        move |data: &[f32], _| {
                             if data.is_empty() { return; }
                             
-                            let mono = list_to_mono(data, channels);
-                            let resampled = decimate_to_16k(mono, sample_rate);
+                            let mono = to_mono(data, channels);
+                            let resampled = decimate(mono, sample_rate, TARGET_SAMPLE_RATE);
                             
                             let rms = calculate_rms(&resampled);
-                            let is_silent = rms < SILENCE_THRESHOLD;
+                            if let Ok(mut v) = vol.lock() { *v = rms; }
                             
-                            if let Ok(mut count) = silence.lock() {
-                                if is_silent {
+                            // Silence detection
+                            if let Ok(mut count) = sil.lock() {
+                                if rms < SILENCE_THRESHOLD {
                                     *count += 1;
-                                    if *count > SILENCE_SKIP_CHUNKS {
-                                        return;
-                                    }
+                                    if *count > SILENCE_SKIP_CHUNKS { return; }
                                 } else {
                                     *count = 0;
                                 }
                             }
                             
-                            if let Ok(mut buf) = buffer.lock() {
-                                buf.extend(resampled);
-                                while buf.len() >= MICRO_CHUNK_SAMPLES {
-                                    let chunk: Vec<f32> = buf.drain(..MICRO_CHUNK_SAMPLES).collect();
+                            // Buffer and send chunks
+                            if let Ok(mut b) = buf.lock() {
+                                b.extend(resampled);
+                                while b.len() >= MICRO_CHUNK_SAMPLES {
+                                    let chunk: Vec<f32> = b.drain(..MICRO_CHUNK_SAMPLES).collect();
                                     if let Some(ref tx) = tx {
                                         let _ = tx.send(chunk);
                                     }
                                 }
                             }
                         },
-                        |err| eprintln!("[STATION 1] Loopback error: {}", err),
+                        |e| eprintln!("[AUDIO] Mic error: {}", e),
                         None
                     ).ok();
                     stream
-                } else {
-                    None
-                }
+                } else { None }
+            } else { None }
+        } else { None };
+        
+        // === SYSTEM AUDIO (WASAPI LOOPBACK) - Windows Only ===
+        #[cfg(target_os = "windows")]
+        let loopback_stream = if capture_mode == CaptureMode::SystemOnly || capture_mode == CaptureMode::Both {
+            // Try to get WASAPI host for loopback
+            use cpal::available_hosts;
+            
+            let wasapi_host = available_hosts()
+                .into_iter()
+                .find(|h| h.name().contains("WASAPI"))
+                .and_then(|id| cpal::host_from_id(id).ok());
+            
+            if let Some(host) = wasapi_host {
+                println!("[AUDIO] Using WASAPI for system audio");
+                
+                // Get the default output device for loopback
+                if let Some(device) = host.default_output_device() {
+                    let name = device.name().unwrap_or_default();
+                    println!("[AUDIO] Loopback device: {}", name);
+                    
+                    // On WASAPI, we can use the output device for loopback input
+                    if let Ok(config) = device.default_output_config() {
+                        let channels = config.channels();
+                        let sample_rate = config.sample_rate().0;
+                        
+                        let tx = audio_tx.clone();
+                        let buf = buffer.clone();
+                        let sil = silence_count.clone();
+                        let vol = volume.clone();
+                        
+                        // Try to build input stream from output device (loopback)
+                        let stream = device.build_input_stream(
+                            &config.into(),
+                            move |data: &[f32], _| {
+                                if data.is_empty() { return; }
+                                
+                                let mono = to_mono(data, channels);
+                                let resampled = decimate(mono, sample_rate, TARGET_SAMPLE_RATE);
+                                
+                                let rms = calculate_rms(&resampled);
+                                if let Ok(mut v) = vol.lock() { *v = rms; }
+                                
+                                if let Ok(mut count) = sil.lock() {
+                                    if rms < SILENCE_THRESHOLD {
+                                        *count += 1;
+                                        if *count > SILENCE_SKIP_CHUNKS { return; }
+                                    } else {
+                                        *count = 0;
+                                    }
+                                }
+                                
+                                if let Ok(mut b) = buf.lock() {
+                                    b.extend(resampled);
+                                    while b.len() >= MICRO_CHUNK_SAMPLES {
+                                        let chunk: Vec<f32> = b.drain(..MICRO_CHUNK_SAMPLES).collect();
+                                        if let Some(ref tx) = tx {
+                                            let _ = tx.send(chunk);
+                                        }
+                                    }
+                                }
+                            },
+                            |e| eprintln!("[AUDIO] Loopback error: {}", e),
+                            None
+                        );
+                        
+                        match stream {
+                            Ok(s) => {
+                                println!("[AUDIO] ✓ WASAPI loopback stream created");
+                                Some(s)
+                            }
+                            Err(e) => {
+                                eprintln!("[AUDIO] ✗ Failed to create loopback: {}", e);
+                                eprintln!("[AUDIO] Note: Try enabling 'Stereo Mix' in Windows Sound settings");
+                                None
+                            }
+                        }
+                    } else { None }
+                } else { None }
             } else {
+                eprintln!("[AUDIO] WASAPI host not available");
                 None
             }
-        } else {
-            None
-        };
-
+        } else { None };
+        
+        #[cfg(not(target_os = "windows"))]
+        let loopback_stream: Option<cpal::Stream> = None;
+        
         // Play streams
         if let Some(ref s) = mic_stream { 
-            if let Err(e) = s.play() {
-                eprintln!("[STATION 1] Failed to start mic: {}", e);
-            } else {
-                println!("[STATION 1] Mic stream playing");
+            if s.play().is_ok() {
+                println!("[AUDIO] ✓ Mic stream active");
             }
         }
+        
+        #[cfg(target_os = "windows")]
         if let Some(ref s) = loopback_stream { 
-            if let Err(e) = s.play() {
-                eprintln!("[STATION 1] Failed to start loopback: {}", e);
-            } else {
-                println!("[STATION 1] Loopback stream playing");
+            if s.play().is_ok() {
+                println!("[AUDIO] ✓ Loopback stream active");
             }
         }
-
-        println!("[STATION 1] Audio capture active. Waiting for stop signal...");
+        
+        println!("[AUDIO] Capture running...");
         let _ = stop_rx.recv();
-        println!("[STATION 1] Audio capture stopped.");
+        println!("[AUDIO] Capture stopped");
     });
 
     *is_rec = true;
-    Ok("Capture started with Station 1 features".to_string())
+    Ok("Capture started".to_string())
 }
 
 #[tauri::command]
@@ -311,5 +311,5 @@ pub fn stop_audio_capture(state: tauri::State<'_, AudioState>) -> Result<String,
     }
 
     *is_rec = false;
-    Ok("Capture stopped".to_string())
+    Ok("Stopped".to_string())
 }
