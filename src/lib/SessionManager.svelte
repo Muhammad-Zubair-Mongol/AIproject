@@ -9,9 +9,12 @@
     let showSaveDialog = false;
     let showLoadDialog = false;
     let showExportDialog = false;
+    let showSummaryDialog = false;
     let sessionTitle = "Untitled Meeting";
-    let exportFormat: "json" | "csv" | "markdown" = "json";
+    let exportFormat: "json" | "csv" | "markdown" | "graphml" | "entities" = "json";
     let isSaving = false;
+    let isGeneratingSummary = false;
+    let sessionSummary: any = null;
 
     async function loadSessions() {
         try {
@@ -102,30 +105,56 @@
             alert(`Export failed: ${error}`);
         }
     }
+    
+    async function generateSummary() {
+        if (!currentSession) return;
+        
+        isGeneratingSummary = true;
+        try {
+            const sessionJson = JSON.stringify(currentSession);
+            const result = await invoke("generate_session_summary", { sessionJson });
+            const updatedSession = JSON.parse(result as string);
+            currentSession = updatedSession;
+            sessionSummary = updatedSession.summary;
+            showSummaryDialog = true;
+        } catch (error) {
+            console.error("Failed to generate summary:", error);
+            alert(`Summary generation failed: ${error}`);
+        } finally {
+            isGeneratingSummary = false;
+        }
+    }
 
     $: if (showLoadDialog) loadSessions();
 </script>
 
 <div class="space-y-2">
     <!-- Action Buttons -->
-    <div class="flex gap-2">
+    <div class="flex gap-2 flex-wrap">
         <button
             class="god-button flex-1"
             onclick={() => (showSaveDialog = true)}
         >
-            💾 Save Session
+            💾 Save
         </button>
         <button
             class="god-button flex-1"
             onclick={() => (showLoadDialog = true)}
         >
-            📂 Load Session
+            📂 Load
         </button>
         <button
             class="god-button flex-1"
             onclick={() => (showExportDialog = true)}
         >
             📤 Export
+        </button>
+        <button
+            class="god-button flex-1"
+            onclick={generateSummary}
+            disabled={isGeneratingSummary}
+        >
+            {isGeneratingSummary ? '⏳' : '📊'} Summary
         </button>
     </div>
 
@@ -266,9 +295,9 @@
                 <div class="text-xs text-green-400 block mb-2">
                     Export Format
                 </div>
-                <div class="flex gap-2 mb-4">
+                <div class="grid grid-cols-3 gap-2 mb-4">
                     <button
-                        class="flex-1 px-3 py-2 text-xs rounded border transition-all {exportFormat ===
+                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
                         'json'
                             ? 'bg-green-500/30 border-green-500 text-green-100'
                             : 'bg-green-900/20 border-green-900 text-green-600'}"
@@ -277,7 +306,7 @@
                         JSON
                     </button>
                     <button
-                        class="flex-1 px-3 py-2 text-xs rounded border transition-all {exportFormat ===
+                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
                         'csv'
                             ? 'bg-green-500/30 border-green-500 text-green-100'
                             : 'bg-green-900/20 border-green-900 text-green-600'}"
@@ -286,13 +315,31 @@
                         CSV
                     </button>
                     <button
-                        class="flex-1 px-3 py-2 text-xs rounded border transition-all {exportFormat ===
+                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
                         'markdown'
                             ? 'bg-green-500/30 border-green-500 text-green-100'
                             : 'bg-green-900/20 border-green-900 text-green-600'}"
                         onclick={() => (exportFormat = "markdown")}
                     >
                         Markdown
+                    </button>
+                    <button
+                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
+                        'graphml'
+                            ? 'bg-green-500/30 border-green-500 text-green-100'
+                            : 'bg-green-900/20 border-green-900 text-green-600'}"
+                        onclick={() => (exportFormat = "graphml")}
+                    >
+                        GraphML
+                    </button>
+                    <button
+                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
+                        'entities'
+                            ? 'bg-green-500/30 border-green-500 text-green-100'
+                            : 'bg-green-900/20 border-green-900 text-green-600'}"
+                        onclick={() => (exportFormat = "entities")}
+                    >
+                        Entities
                     </button>
                 </div>
 
