@@ -2,41 +2,34 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
-use tokio::time::{Duration, interval, timeout, Instant};
+use tokio::time::{Duration, interval, timeout, Instant, sleep};
 use crossbeam_channel::Receiver;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
-use tokio_tungstenite::{WebSocketStream, MaybeTlsStream};
-use tokio::net::TcpStream;
 
 // ============================================================================
-// GEMINI CLIENT - Smart Audio Processing with GOD PROMPT V9
+// GEMINI CLIENT - With Rate Limiting & Smart Batching
 // ============================================================================
 
 const GEMINI_REST_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// SMART PROCESSING CONFIG
-const MIN_SPEECH_DURATION_SECS: f32 = 2.0;  // Minimum 2 seconds of speech
-const MAX_BATCH_DURATION_SECS: f32 = 10.0;  // Maximum 10 seconds per batch  
-const SILENCE_THRESHOLD: f32 = 0.015;       // RMS below this = silence
-const SPEECH_THRESHOLD: f32 = 0.02;         // RMS above this = speech
-const SILENCE_TIMEOUT_SECS: f32 = 1.5;      // 1.5 seconds of silence = end of utterance
+// RATE LIMITING CONFIG
+const MIN_REQUEST_INTERVAL_SECS: u64 = 3;      // Minimum 3 seconds between requests
+const INITIAL_BACKOFF_SECS: u64 = 5;           // Start with 5 second backoff
+const MAX_BACKOFF_SECS: u64 = 60;              // Max 60 second backoff
+const RATE_LIMIT_CODES: [&str; 3] = ["429", "RESOURCE_EXHAUSTED", "rate"];
 
-type WsWrite = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ApiMode {
-    RestApi,
-}
+// AUDIO BATCHING CONFIG
+const MIN_SPEECH_SECS: f32 = 3.0;              // Minimum 3 seconds of speech
+const SILENCE_TIMEOUT_SECS: f32 = 2.0;         // 2 seconds silence = end
+const MAX_BATCH_SECS: f32 = 15.0;              // Max 15 seconds per batch
+const SPEECH_THRESHOLD: f32 = 0.02;
+const SILENCE_THRESHOLD: f32 = 0.01;
 
 pub struct GeminiState {
     pub audio_rx: StdMutex<Option<Receiver<Vec<f32>>>>,
     pub api_key: StdMutex<Option<String>>,
     pub is_connected: StdMutex<bool>,
     pub selected_model: StdMutex<String>,
-    pub api_mode: StdMutex<ApiMode>,
-    pub ws_write: Mutex<Option<Arc<Mutex<WsWrite>>>>,
 }
 
 impl Default for GeminiState {
@@ -46,50 +39,35 @@ impl Default for GeminiState {
             api_key: StdMutex::new(None),
             is_connected: StdMutex::new(false),
             selected_model: StdMutex::new("gemini-2.5-flash-preview-09-2025".to_string()),
-            api_mode: StdMutex::new(ApiMode::RestApi),
-            ws_write: Mutex::new(None),
         }
     }
 }
 
-// GOD PROMPT V9 - The core system instruction
-const GOD_PROMPT_V9: &str = r#"You are a PASSIVE MEETING INTELLIGENCE ENGINE. Your role is to listen and extract intelligence from meeting audio.
+const GOD_PROMPT_V9: &str = r#"You are a PASSIVE MEETING INTELLIGENCE ENGINE.
 
-STRICT OUTPUT FORMAT - JSON ONLY:
-{
-  "transcript": "exact transcription of speech",
-  "speaker": "Speaker 1",
-  "tone": "NEUTRAL|URGENT|FRUSTRATED|EXCITED|POSITIVE|NEGATIVE|HESITANT|DOMINANT|EMPATHETIC",
-  "category": ["TASK", "DECISION", "DEADLINE", "QUERY", "ACTION_ITEM", "RISK", "INFO"],
-  "confidence": 0.85,
-  "language": "en|ur|hi"
-}
+OUTPUT FORMAT - JSON ONLY:
+{"transcript":"exact text","speaker":"Speaker 1","tone":"NEUTRAL","category":["INFO"],"confidence":0.85}
 
 RULES:
-1. Output ONLY valid JSON - no markdown, no explanations
-2. Transcribe speech accurately, preserve language (English, Urdu, Hindi)
-3. Detect speaker tone from voice patterns
-4. Categorize content appropriately
-5. Set confidence based on audio clarity
-6. If audio is unclear or silence: {"status": "silence", "confidence": 0.0}
-
-Be concise. Extract intelligence. No small talk."#;
+- JSON only, no markdown
+- Transcribe accurately (English/Urdu/Hindi)
+- tone: NEUTRAL|URGENT|FRUSTRATED|EXCITED|POSITIVE|NEGATIVE
+- category: TASK|DECISION|DEADLINE|QUERY|ACTION_ITEM|RISK|INFO
+- If silence/unclear: {"status":"silence"}"#;
 
 // ============================================================================
-// REST API Structures
+// Structs
 // ============================================================================
 
 #[derive(Serialize)]
 struct RestRequest {
     contents: Vec<Content>,
     system_instruction: Option<SystemInstruction>,
-    generation_config: Option<GenerationConfig>,
+    generation_config: GenerationConfig,
 }
 
 #[derive(Serialize)]
-struct Content {
-    parts: Vec<Part>,
-}
+struct Content { parts: Vec<Part> }
 
 #[derive(Serialize)]
 struct Part {
@@ -100,26 +78,16 @@ struct Part {
 }
 
 #[derive(Serialize)]
-struct InlineData {
-    mime_type: String,
-    data: String,
-}
+struct InlineData { mime_type: String, data: String }
 
 #[derive(Serialize)]
-struct SystemInstruction {
-    parts: Vec<TextPart>,
-}
+struct SystemInstruction { parts: Vec<TextPart> }
 
 #[derive(Serialize)]
-struct TextPart {
-    text: String,
-}
+struct TextPart { text: String }
 
 #[derive(Serialize)]
-struct GenerationConfig {
-    temperature: f32,
-    max_output_tokens: i32,
-}
+struct GenerationConfig { temperature: f32, max_output_tokens: i32 }
 
 #[derive(Deserialize, Debug)]
 struct RestResponse {
@@ -128,116 +96,136 @@ struct RestResponse {
 }
 
 #[derive(Deserialize, Debug)]
-struct Candidate {
-    content: Option<CandidateContent>,
-}
+struct Candidate { content: Option<CandidateContent> }
 
 #[derive(Deserialize, Debug)]
-struct CandidateContent {
-    parts: Option<Vec<ResponsePart>>,
-}
+struct CandidateContent { parts: Option<Vec<ResponsePart>> }
 
 #[derive(Deserialize, Debug)]
-struct ResponsePart {
-    text: Option<String>,
-}
+struct ResponsePart { text: Option<String> }
 
 #[derive(Deserialize, Debug)]
-struct ApiError {
-    message: Option<String>,
-}
+struct ApiError { message: Option<String>, code: Option<i32> }
 
 // ============================================================================
-// Audio Processing Helpers
+// Audio Helpers
 // ============================================================================
 
-fn samples_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let num_samples = samples.len();
-    let byte_rate = sample_rate * 2;
-    let data_size = (num_samples * 2) as u32;
-    let file_size = 36 + data_size;
+fn to_wav(samples: &[f32]) -> Vec<u8> {
+    let n = samples.len();
+    let data_size = (n * 2) as u32;
+    let mut wav = Vec::with_capacity(44 + n * 2);
     
-    let mut wav = Vec::with_capacity(44 + num_samples * 2);
     wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&file_size.to_le_bytes());
+    wav.extend_from_slice(&(36 + data_size).to_le_bytes());
     wav.extend_from_slice(b"WAVE");
     wav.extend_from_slice(b"fmt ");
     wav.extend_from_slice(&16u32.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&sample_rate.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&16000u32.to_le_bytes());
+    wav.extend_from_slice(&32000u32.to_le_bytes());
     wav.extend_from_slice(&2u16.to_le_bytes());
     wav.extend_from_slice(&16u16.to_le_bytes());
     wav.extend_from_slice(b"data");
     wav.extend_from_slice(&data_size.to_le_bytes());
     
-    for sample in samples {
-        let s = (*sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-        wav.extend_from_slice(&s.to_le_bytes());
+    for s in samples {
+        wav.extend_from_slice(&((*s * 32767.0).clamp(-32768.0, 32767.0) as i16).to_le_bytes());
     }
     wav
 }
 
-fn calculate_rms(samples: &[f32]) -> f32 {
+fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() { return 0.0; }
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
-async fn send_to_gemini(key: &str, model: &str, audio: &[f32]) -> Result<String, String> {
-    let wav_data = samples_to_wav(audio, 16000);
-    let audio_base64 = BASE64.encode(&wav_data);
+// ============================================================================
+// API Call with Rate Limiting
+// ============================================================================
+
+async fn call_gemini_with_backoff(
+    key: &str,
+    model: &str,
+    audio: &[f32],
+    backoff: &mut u64,
+    last_request: &mut Instant,
+) -> Result<String, String> {
+    // Enforce minimum interval
+    let elapsed = last_request.elapsed();
+    let min_interval = Duration::from_secs(MIN_REQUEST_INTERVAL_SECS);
+    if elapsed < min_interval {
+        let wait = min_interval - elapsed;
+        println!("[GEMINI] Rate limit: waiting {:.1}s", wait.as_secs_f32());
+        sleep(wait).await;
+    }
+    
+    // Apply backoff if we had errors
+    if *backoff > 0 {
+        println!("[GEMINI] Backoff: waiting {}s", backoff);
+        sleep(Duration::from_secs(*backoff)).await;
+    }
+    
+    *last_request = Instant::now();
+    
+    let wav = to_wav(audio);
+    let b64 = BASE64.encode(&wav);
     
     let request = RestRequest {
         contents: vec![Content {
             parts: vec![
-                Part {
-                    text: Some("Analyze this meeting audio and extract intelligence:".to_string()),
-                    inline_data: None,
-                },
-                Part {
-                    text: None,
-                    inline_data: Some(InlineData {
-                        mime_type: "audio/wav".to_string(),
-                        data: audio_base64,
-                    }),
-                },
+                Part { text: Some("Analyze this audio:".into()), inline_data: None },
+                Part { text: None, inline_data: Some(InlineData { 
+                    mime_type: "audio/wav".into(), 
+                    data: b64 
+                })},
             ],
         }],
         system_instruction: Some(SystemInstruction {
-            parts: vec![TextPart { text: GOD_PROMPT_V9.to_string() }],
+            parts: vec![TextPart { text: GOD_PROMPT_V9.into() }],
         }),
-        generation_config: Some(GenerationConfig {
-            temperature: 0.1,
-            max_output_tokens: 1024,
-        }),
+        generation_config: GenerationConfig { temperature: 0.1, max_output_tokens: 512 },
     };
     
     let url = format!("{}/{}:generateContent?key={}", GEMINI_REST_URL, model, key);
     
     let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
+    let response = client.post(&url)
         .json(&request)
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| format!("HTTP error: {}", e))?;
+        .map_err(|e| format!("HTTP: {}", e))?;
     
-    let response_text = response.text().await.map_err(|e| format!("Read error: {}", e))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| format!("Read: {}", e))?;
     
-    if let Ok(resp) = serde_json::from_str::<RestResponse>(&response_text) {
+    // Check for rate limiting
+    let is_rate_limited = status.as_u16() == 429 
+        || RATE_LIMIT_CODES.iter().any(|code| text.contains(code));
+    
+    if is_rate_limited {
+        // Exponential backoff
+        *backoff = (*backoff * 2).max(INITIAL_BACKOFF_SECS).min(MAX_BACKOFF_SECS);
+        println!("[GEMINI] ⚠️ Rate limited! Backoff now: {}s", backoff);
+        return Err(format!("Rate limited. Waiting {}s before retry.", backoff));
+    }
+    
+    // Success - reset backoff
+    *backoff = 0;
+    
+    // Parse response
+    if let Ok(resp) = serde_json::from_str::<RestResponse>(&text) {
         if let Some(error) = resp.error {
-            return Err(format!("API error: {}", error.message.unwrap_or_default()));
+            return Err(format!("API: {}", error.message.unwrap_or_default()));
         }
-        if let Some(candidates) = resp.candidates {
-            if let Some(candidate) = candidates.first() {
-                if let Some(content) = &candidate.content {
-                    if let Some(parts) = &content.parts {
-                        if let Some(part) = parts.first() {
-                            if let Some(text) = &part.text {
-                                return Ok(text.clone());
-                            }
+        if let Some(c) = resp.candidates.and_then(|c| c.into_iter().next()) {
+            if let Some(content) = c.content {
+                if let Some(parts) = content.parts {
+                    if let Some(part) = parts.into_iter().next() {
+                        if let Some(t) = part.text {
+                            return Ok(t);
                         }
                     }
                 }
@@ -245,12 +233,11 @@ async fn send_to_gemini(key: &str, model: &str, audio: &[f32]) -> Result<String,
         }
     }
     
-    // Return raw response if parsing fails
-    Ok(response_text)
+    Ok(text)
 }
 
 // ============================================================================
-// Main Connection Command
+// Main Connection
 // ============================================================================
 
 #[tauri::command]
@@ -262,197 +249,160 @@ pub async fn test_gemini_connection(
 ) -> Result<String, String> {
     *state.api_key.lock().unwrap() = Some(key.clone());
     
-    let selected_model = if let Some(m) = &model {
-        *state.selected_model.lock().unwrap() = m.clone();
-        m.clone()
-    } else {
-        state.selected_model.lock().unwrap().clone()
-    };
+    let m = model.unwrap_or_else(|| state.selected_model.lock().unwrap().clone());
+    *state.selected_model.lock().unwrap() = m.clone();
     
     println!("========================================");
-    println!("[GEMINI] Model: {}", selected_model);
-    println!("[GEMINI] Using REST API with smart batching");
+    println!("[GEMINI] Model: {}", m);
+    println!("[GEMINI] Rate limits: {}s min interval, {}s initial backoff", 
+             MIN_REQUEST_INTERVAL_SECS, INITIAL_BACKOFF_SECS);
     println!("========================================");
     
-    let _ = app.emit("god:status", "Testing connection...");
+    let _ = app.emit("god:status", "Testing...");
     
-    // Test with simple request
-    let test_url = format!("{}/{}:generateContent?key={}", GEMINI_REST_URL, selected_model, key);
-    let test_req = serde_json::json!({
-        "contents": [{"parts": [{"text": "Reply with only: OK"}]}]
-    });
-    
+    // Quick test
+    let url = format!("{}/{}:generateContent?key={}", GEMINI_REST_URL, m, key);
     let client = reqwest::Client::new();
-    match client.post(&test_url).json(&test_req).timeout(Duration::from_secs(10)).send().await {
-        Ok(resp) => {
-            let text = resp.text().await.unwrap_or_default();
-            if text.contains("error") {
-                println!("[GEMINI] Error response: {}", &text[..text.len().min(200)]);
-                let _ = app.emit("god:status", "API Error - Check key");
-                return Err("API error".to_string());
+    
+    match client.post(&url)
+        .json(&serde_json::json!({"contents":[{"parts":[{"text":"OK"}]}]}))
+        .timeout(Duration::from_secs(10))
+        .send().await 
+    {
+        Ok(r) => {
+            let t = r.text().await.unwrap_or_default();
+            if t.contains("error") {
+                let _ = app.emit("god:status", "API Error");
+                return Err("API error".into());
             }
-            println!("[GEMINI] Connection test passed");
             *state.is_connected.lock().unwrap() = true;
             let _ = app.emit("god:status", "Connected ✓");
         }
         Err(e) => {
             let _ = app.emit("god:status", format!("Failed: {}", e));
-            return Err(format!("Connection failed: {}", e));
+            return Err(e.to_string());
         }
     }
     
-    // Start smart audio processing
+    // Start smart audio loop
     let audio_rx = state.audio_rx.lock().unwrap().take();
     if let Some(rx) = audio_rx {
-        let app_clone = app.clone();
-        let key_clone = key.clone();
-        let model_clone = selected_model.clone();
-        
+        let app = app.clone();
+        let key = key.clone();
+        let model = m.clone();
         tokio::spawn(async move {
-            smart_audio_loop(rx, app_clone, key_clone, model_clone).await;
+            smart_audio_loop(rx, app, key, model).await;
         });
     }
     
-    Ok(format!("Connected to {}", selected_model))
+    Ok(format!("Connected to {}", m))
 }
 
 // ============================================================================
-// Smart Audio Processing Loop
+// Smart Audio Loop with Rate Limiting
 // ============================================================================
 
-async fn smart_audio_loop(
-    rx: Receiver<Vec<f32>>,
-    app: AppHandle,
-    key: String,
-    model: String,
-) {
-    println!("[AUDIO] Smart processing loop started");
-    println!("[AUDIO] Min speech: {}s, Silence timeout: {}s", MIN_SPEECH_DURATION_SECS, SILENCE_TIMEOUT_SECS);
+async fn smart_audio_loop(rx: Receiver<Vec<f32>>, app: AppHandle, key: String, model: String) {
+    println!("[AUDIO] Loop started - Min {}s speech, {}s silence timeout", 
+             MIN_SPEECH_SECS, SILENCE_TIMEOUT_SECS);
     
     let _ = app.emit("god:status", "Listening...");
     
-    let mut speech_buffer: Vec<f32> = Vec::new();
-    let mut is_speaking = false;
+    let mut buffer: Vec<f32> = Vec::new();
+    let mut speaking = false;
     let mut speech_start: Option<Instant> = None;
     let mut last_speech: Option<Instant> = None;
-    let mut is_processing = false;
+    let mut processing = false;
+    
+    // Rate limiting state
+    let mut backoff: u64 = 0;
+    let mut last_request = Instant::now() - Duration::from_secs(MIN_REQUEST_INTERVAL_SECS);
+    let mut request_count = 0u32;
     
     let mut tick = interval(Duration::from_millis(100));
-    let sample_rate = 16000;
     
     loop {
         tick.tick().await;
         
-        // Skip if already processing
-        if is_processing {
-            continue;
-        }
+        if processing { continue; }
         
-        // Collect all available audio
-        let mut new_samples: Vec<f32> = Vec::new();
-        while let Ok(samples) = rx.try_recv() {
-            new_samples.extend(samples);
-        }
+        // Collect audio
+        let mut new: Vec<f32> = Vec::new();
+        while let Ok(s) = rx.try_recv() { new.extend(s); }
+        if new.is_empty() { continue; }
         
-        if new_samples.is_empty() {
-            continue;
-        }
+        let level = rms(&new);
         
-        // Calculate RMS for this chunk
-        let rms = calculate_rms(&new_samples);
-        
-        // Speech detection state machine
-        if rms > SPEECH_THRESHOLD {
-            // Speech detected
-            if !is_speaking {
-                is_speaking = true;
+        // Speech detection
+        if level > SPEECH_THRESHOLD {
+            if !speaking {
+                speaking = true;
                 speech_start = Some(Instant::now());
-                println!("[AUDIO] Speech started (RMS: {:.3})", rms);
+                println!("[AUDIO] Speech started");
             }
             last_speech = Some(Instant::now());
-            speech_buffer.extend(new_samples);
-        } else if rms > SILENCE_THRESHOLD {
-            // Borderline - keep buffering if we're already speaking
-            if is_speaking {
-                speech_buffer.extend(new_samples);
-                last_speech = Some(Instant::now());
-            }
-        } else {
-            // Silence
-            if is_speaking {
-                speech_buffer.extend(new_samples);
-            }
+            buffer.extend(new);
+        } else if level > SILENCE_THRESHOLD && speaking {
+            buffer.extend(new);
+            last_speech = Some(Instant::now());
+        } else if speaking {
+            buffer.extend(new);
         }
         
-        // Check if we should process
-        let should_process = if is_speaking {
-            let speech_duration = speech_start.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
-            let silence_duration = last_speech.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
+        // Check if should process
+        let should_process = if speaking {
+            let duration = speech_start.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
+            let silence = last_speech.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
             
-            // Process if:
-            // 1. We have enough speech AND silence indicates end of utterance
-            // 2. OR we hit max batch duration
-            let end_of_utterance = speech_duration >= MIN_SPEECH_DURATION_SECS 
-                                   && silence_duration >= SILENCE_TIMEOUT_SECS;
-            let max_reached = speech_duration >= MAX_BATCH_DURATION_SECS;
-            
-            end_of_utterance || max_reached
-        } else {
-            false
-        };
+            (duration >= MIN_SPEECH_SECS && silence >= SILENCE_TIMEOUT_SECS)
+                || duration >= MAX_BATCH_SECS
+        } else { false };
         
-        if should_process && !speech_buffer.is_empty() {
-            let speech_duration = speech_buffer.len() as f32 / sample_rate as f32;
+        if should_process && !buffer.is_empty() {
+            let duration = buffer.len() as f32 / 16000.0;
             
-            // Only process if we have minimum duration
-            if speech_duration >= MIN_SPEECH_DURATION_SECS {
-                is_processing = true;
-                let _ = app.emit("god:status", format!("Processing {:.1}s...", speech_duration));
+            if duration >= MIN_SPEECH_SECS {
+                processing = true;
+                request_count += 1;
                 
-                println!("[AUDIO] Processing {:.1}s of speech ({} samples)", speech_duration, speech_buffer.len());
+                let _ = app.emit("god:status", format!("Processing {:.1}s (#{})...", duration, request_count));
+                println!("[AUDIO] Processing {:.1}s, request #{}", duration, request_count);
                 
-                let audio_to_process = speech_buffer.clone();
-                let app_clone = app.clone();
-                let key_clone = key.clone();
-                let model_clone = model.clone();
-                
-                // Reset state before async call
-                speech_buffer.clear();
-                is_speaking = false;
+                let audio = buffer.clone();
+                buffer.clear();
+                speaking = false;
                 speech_start = None;
                 last_speech = None;
                 
-                // Process async
-                match send_to_gemini(&key_clone, &model_clone, &audio_to_process).await {
+                match call_gemini_with_backoff(&key, &model, &audio, &mut backoff, &mut last_request).await {
                     Ok(response) => {
-                        println!("[GEMINI] Response: {}", &response[..response.len().min(200)]);
-                        let _ = app_clone.emit("god:transcript", response);
-                        let _ = app_clone.emit("god:status", "Listening...");
+                        println!("[GEMINI] ✓ Response received");
+                        let _ = app.emit("god:transcript", response);
+                        let _ = app.emit("god:status", "Listening...");
                     }
                     Err(e) => {
-                        println!("[GEMINI] Error: {}", e);
-                        let _ = app_clone.emit("god:status", format!("Error: {}", e));
-                        // Wait a bit before retrying
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        let _ = app_clone.emit("god:status", "Listening...");
+                        println!("[GEMINI] ✗ Error: {}", e);
+                        let _ = app.emit("god:status", format!("Error: {}. Waiting...", e));
+                        // Extra wait on error
+                        sleep(Duration::from_secs(3)).await;
+                        let _ = app.emit("god:status", "Listening...");
                     }
                 }
                 
-                is_processing = false;
+                processing = false;
             } else {
-                // Not enough speech, discard
-                println!("[AUDIO] Discarding short speech ({:.1}s < {}s)", speech_duration, MIN_SPEECH_DURATION_SECS);
-                speech_buffer.clear();
-                is_speaking = false;
+                println!("[AUDIO] Discarding short segment ({:.1}s)", duration);
+                buffer.clear();
+                speaking = false;
                 speech_start = None;
                 last_speech = None;
             }
         }
         
-        // Prevent buffer from growing too large during speech
-        let max_buffer_samples = (MAX_BATCH_DURATION_SECS * sample_rate as f32) as usize;
-        if speech_buffer.len() > max_buffer_samples {
-            speech_buffer.drain(0..speech_buffer.len() - max_buffer_samples);
+        // Prevent buffer from growing too large
+        let max_samples = (MAX_BATCH_SECS * 16000.0) as usize;
+        if buffer.len() > max_samples {
+            buffer.drain(0..buffer.len() - max_samples);
         }
     }
 }
@@ -466,20 +416,8 @@ pub fn set_gemini_model(state: tauri::State<'_, GeminiState>, model: String) -> 
 #[tauri::command]
 pub fn get_available_models() -> Vec<serde_json::Value> {
     vec![
-        serde_json::json!({
-            "id": "gemini-2.5-flash-preview-09-2025",
-            "name": "⚡ Gemini 2.5 Flash",
-            "mode": "REST"
-        }),
-        serde_json::json!({
-            "id": "gemini-2.5-flash-lite-preview-09-2025",
-            "name": "🔥 Gemini 2.5 Flash Lite",
-            "mode": "REST"
-        }),
-        serde_json::json!({
-            "id": "gemini-3-flash-preview",
-            "name": "💎 Gemini 3 Flash",
-            "mode": "REST"
-        }),
+        serde_json::json!({"id": "gemini-2.5-flash-preview-09-2025", "name": "⚡ Gemini 2.5 Flash"}),
+        serde_json::json!({"id": "gemini-2.5-flash-lite-preview-09-2025", "name": "🔥 Gemini 2.5 Flash Lite"}),
+        serde_json::json!({"id": "gemini-3-flash-preview", "name": "💎 Gemini 3 Flash"}),
     ]
 }

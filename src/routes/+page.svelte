@@ -30,11 +30,11 @@
     let volumeInterval: ReturnType<typeof setInterval> | null = null;
 
     // Station 4: Latency Illusion
-    let isTyping = false; // Show typing indicator
-    let partialText = ""; // Progressive render buffer
-    let latencyMs = 0; // Current latency metric
-    let searchQuery = ""; // Full-text search
-    let searchFilter = "all"; // speaker, category, time
+    let isTyping = false;
+    let partialText = "";
+    let latencyMs = 0;
+    let searchQuery = "";
+    let searchFilter = "all";
 
     // Core Data
     let transcripts: Array<{
@@ -45,7 +45,7 @@
         tone?: string;
         category?: string[];
         confidence?: number;
-        isPartial?: boolean; // For progressive renders
+        isPartial?: boolean;
     }> = [];
     
     // Alerts data
@@ -84,7 +84,6 @@
             minute: "2-digit",
         });
 
-        // 1. Add Transcript
         const mockTranscripts = [
             "We should definitely prioritize the database migration next sprint.",
             "I agree, but we need to ensure the backup strategy is solid.",
@@ -104,7 +103,6 @@
             isPartial: false
         }];
 
-        // 2. Add Graph Node/Edge
         const entityNames = ["Database", "Migration", "Sarah", "API", "Latency", "Backup"];
         const entity = entityNames[Math.floor(Math.random() * entityNames.length)];
         
@@ -122,7 +120,6 @@
             }
         }
 
-        // 3. Add Alert
         if (Math.random() > 0.5) {
             alerts = [{
                 id: `alert_${Date.now()}`,
@@ -149,6 +146,13 @@
         try {
             await invoke("set_capture_mode", { mode });
             captureMode = mode;
+            
+            if (isRecording) {
+                console.log("Restarting capture with new mode:", mode);
+                await invoke("stop_audio_capture");
+                await invoke("start_audio_capture");
+                status = `Recording (${mode})...`;
+            }
         } catch (error) {
             console.error("Failed to set capture mode:", error);
         }
@@ -168,8 +172,7 @@
             if (isRecording) {
                 await invoke("stop_audio_capture");
                 isRecording = false;
-                status = "Idle";
-                // Stop volume polling
+                status = "Ready";
                 if (volumeInterval) {
                     clearInterval(volumeInterval);
                     volumeInterval = null;
@@ -179,7 +182,6 @@
                 await invoke("start_audio_capture");
                 isRecording = true;
                 status = "Recording...";
-                // Start volume polling (10 times per second)
                 volumeInterval = setInterval(pollVolume, 100);
             }
         } catch (error) {
@@ -194,13 +196,11 @@
             return;
         }
         
-        // Save to localStorage immediately (before connect attempt)
         localStorage.setItem("gemini_api_key", apiKey);
         localStorage.setItem("gemini_model", selectedModel);
         
-        // Check if running in Tauri
         if (!isRunningInTauri) {
-            status = "Browser Mode - Cannot connect (use npm run tauri dev)";
+            status = "Browser Mode - Cannot connect";
             return;
         }
         
@@ -244,12 +244,10 @@
     let unlistenIntelligence: () => void;
 
     onMount(async () => {
-        // Load saved settings from localStorage
         const savedKey = localStorage.getItem("gemini_api_key");
         const savedModel = localStorage.getItem("gemini_model");
         if (savedKey) apiKey = savedKey;
         
-        // Check if saved model is valid
         const validModels = [
             "gemini-2.5-flash-preview-09-2025", 
             "gemini-2.5-flash-lite-preview-09-2025",
@@ -263,12 +261,11 @@
             localStorage.setItem("gemini_model", selectedModel);
         }
         
-        // Detect if running in Tauri
         isRunningInTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
         
         if (!isRunningInTauri) {
-            console.warn("Tauri API not detected. App is likely running in a web browser. Native features will be disabled.");
-            status = "Web Preview (Native Disabled)";
+            console.warn("Tauri API not detected.");
+            status = "Web Preview Mode";
             return;
         }
 
@@ -276,108 +273,96 @@
             await loadDevices();
 
             unlistenStatus = await listen("god:status", (event) => {
-            const s = event.payload as string;
-            // Clean up status messages for UI
-            if (s === "GEMINI_CONNECTED") {
-                isGeminiConnected = true;
-                status = "Connected";
-            } else if (s === "DISCONNECTED") {
-                isGeminiConnected = false;
-                status = "Disconnected";
-            } else if (s.startsWith("DISCONNECTED: ")) {
-                isGeminiConnected = false;
-                status = s.replace("DISCONNECTED: ", "Error: ");
-            } else {
-                status = s;
-            }
-        });
+                const s = event.payload as string;
+                if (s === "GEMINI_CONNECTED") {
+                    isGeminiConnected = true;
+                    status = "Connected";
+                } else if (s === "DISCONNECTED") {
+                    isGeminiConnected = false;
+                    status = "Disconnected";
+                } else if (s.startsWith("DISCONNECTED: ")) {
+                    isGeminiConnected = false;
+                    status = s.replace("DISCONNECTED: ", "Error: ");
+                } else {
+                    status = s;
+                }
+            });
 
-        unlistenTranscript = await listen("god:transcript", (event) => {
-            const text = event.payload as string;
-            const startTime = performance.now();
-            
-            // Station 4: Progressive rendering with typing illusion
-            isTyping = true;
-            partialText = text;
-            
-            const newTranscript = {
-                id: `t_${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                }),
-                speaker: "Speaker",
-                text: text,
-                confidence: 0.5,
-                isPartial: true, // Will be updated when intelligence arrives
-            };
-            
-            transcripts = [...transcripts, newTranscript];
-            
-            // Track latency
-            latencyMs = Math.round(performance.now() - startTime);
-            
-            // Clear typing indicator after short delay
-            setTimeout(() => {
-                isTyping = false;
-                partialText = "";
-            }, 100);
-        });
+            unlistenTranscript = await listen("god:transcript", (event) => {
+                const text = event.payload as string;
+                const startTime = performance.now();
+                
+                isTyping = true;
+                partialText = text;
+                
+                const newTranscript = {
+                    id: `t_${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    }),
+                    speaker: "Speaker",
+                    text: text,
+                    confidence: 0.5,
+                    isPartial: true,
+                };
+                
+                transcripts = [...transcripts, newTranscript];
+                latencyMs = Math.round(performance.now() - startTime);
+                
+                setTimeout(() => {
+                    isTyping = false;
+                    partialText = "";
+                }, 100);
+            });
 
-        unlistenIntelligence = await listen("god:intelligence", (event) => {
-            const intel = event.payload as any;
-            console.log("Intelligence:", intel);
-            // Logic to update existing transcript or add new structured item could go here
-        });
-        
-        // Station 6: Tray icon events
-        await listen("tray:record", () => {
-            if (!isRecording) toggleCapture();
-        });
-        
-        await listen("tray:stop", () => {
-            if (isRecording) toggleCapture();
-        });
+            unlistenIntelligence = await listen("god:intelligence", (event) => {
+                const intel = event.payload as any;
+                console.log("Intelligence:", intel);
+            });
+            
+            await listen("tray:record", () => {
+                if (!isRecording) toggleCapture();
+            });
+            
+            await listen("tray:stop", () => {
+                if (isRecording) toggleCapture();
+            });
         } catch (error) {
             console.error("Failed to initialize Tauri listeners:", error);
             status = "Tauri Init Error";
         }
         
-        // Global keyboard shortcuts
         document.addEventListener("keydown", handleKeyDown);
     });
     
     function handleKeyDown(e: KeyboardEvent) {
-        // Ctrl+Shift shortcuts for god controls
         if (e.ctrlKey && e.shiftKey) {
             switch (e.key) {
-                case "R": // Ctrl+Shift+R: Toggle recording
+                case "R":
                     e.preventDefault();
                     toggleCapture();
                     break;
-                case "S": // Ctrl+Shift+S: Quick save session
+                case "S":
                     e.preventDefault();
-                    // Emit save event
                     console.log("[HOTKEY] Save session");
                     break;
-                case "G": // Ctrl+Shift+G: Toggle graph view
+                case "G":
                     e.preventDefault();
                     activeTab = activeTab === "graph" ? "transcript" : "graph";
                     break;
-                case "A": // Ctrl+Shift+A: Toggle alerts
+                case "A":
                     e.preventDefault();
                     activeTab = "alerts";
                     break;
-                case "T": // Ctrl+Shift+T: Toggle transcript
+                case "T":
                     e.preventDefault();
                     activeTab = "transcript";
                     break;
             }
         }
         
-        // Escape to minimize
         if (e.key === "Escape" && isRecording) {
-            // Could minimize to tray here
             console.log("[HOTKEY] Escape pressed during recording");
         }
     }
@@ -388,194 +373,113 @@
         if (unlistenIntelligence) unlistenIntelligence();
         document.removeEventListener("keydown", handleKeyDown);
     });
+
+    // Computed display text for transcription
+    $: displayText = transcripts.length > 0 
+        ? transcripts[transcripts.length - 1].text 
+        : "No transcripts yet. Start recording to begin.";
 </script>
 
-<div
-    class="h-screen w-screen flex bg-slate-50 text-slate-900 font-sans overflow-hidden"
->
+<div class="h-screen w-screen flex bg-[#0a0c0f] font-sans overflow-hidden">
     <!-- SIDEBAR -->
-    <div
-        class="w-64 bg-white border-r border-slate-200 flex flex-col justify-between"
-    >
-        <!-- Brand -->
-        <div class="p-6 border-b border-slate-100">
-            <h1 class="text-lg font-bold tracking-tight text-slate-800">
-                Meeting Mind
-            </h1>
-            <p class="text-xs text-slate-500 mt-1">Intelligence Engine</p>
+    <div class="w-72 sidebar flex flex-col">
+        <!-- Brand Header -->
+        <div class="p-5 border-b border-cyan-500/10">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-xl font-bold text-slate-100 tracking-tight">
+                        Meeting Mind
+                    </h1>
+                    <p class="text-xs text-cyan-400 mt-0.5">Intelligence Engine</p>
+                </div>
+                <div class="nav-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
+                        <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
+                        <path d="M2 2l7.586 7.586"></path>
+                        <circle cx="11" cy="11" r="2"></circle>
+                    </svg>
+                </div>
+            </div>
         </div>
 
-        <!-- Navigation -->
-        <div class="flex-1 p-4 space-y-1 overflow-y-auto">
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'transcript'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "transcript")}
-            >
-                Transcripts
-            </button>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'graph'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "graph")}
-            >
-                🕸️ Knowledge Graph
-            </button>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'alerts'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "alerts")}
-            >
-                🔔 Alerts
-                {#if alerts.filter(a => a.severity === 'critical').length > 0}
-                    <span class="ml-2 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">
-                        {alerts.filter(a => a.severity === 'critical').length}
-                    </span>
-                {/if}
-            </button>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'analytics'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "analytics")}
-            >
-                📊 Analytics
-            </button>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'diagnostics'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "diagnostics")}
-            >
-                🔧 Diagnostics
-            </button>
-            <div class="pt-4 pb-2">
-                <p
-                    class="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider"
-                >
-                    Settings
-                </p>
+        <!-- Vocal Topography Section -->
+        <div class="p-4">
+            <div class="section-header">
+                <span class="section-title">Vocal Topography</span>
+                <div class="nav-icon w-8 h-8" style="font-size: 0.875rem;">
+                    <span class="text-cyan-400">R</span>
+                </div>
             </div>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors {activeTab ===
-                'settings'
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}"
-                onclick={() => (activeTab = "settings")}
-            >
-                Configuration
-            </button>
-
-            <!-- Debug / Testing -->
-            <div class="pt-4 pb-2">
-                <p
-                    class="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider"
-                >
-                    Testing
-                </p>
+            
+            <div class="sidebar-card mb-3">
+                <div class="relative">
+                    <img src="/vocal_topography.png" alt="English Vocal" class="sidebar-card-image opacity-75" />
+                    <div class="absolute inset-0 bg-gradient-to-t from-[#0d1117] via-transparent to-transparent"></div>
+                    <div class="absolute top-3 left-1/2 -translate-x-1/2">
+                        <span class="language-pill">English</span>
+                    </div>
+                </div>
             </div>
-            <button
-                class="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                onclick={simulateIntelligence}
-            >
-                🚀 Simulate Intelligence
-            </button>
+            
+            <div class="sidebar-card">
+                <div class="relative">
+                    <img src="/vocal_topography.png" alt="Urdu Vocal" class="sidebar-card-image opacity-60 hue-rotate-30" />
+                    <div class="absolute inset-0 bg-gradient-to-t from-[#0d1117] via-transparent to-transparent"></div>
+                    <div class="absolute top-3 left-1/2 -translate-x-1/2">
+                        <span class="language-pill">Urdu</span>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            <!-- Quick connection controls -->
-            <div
-                class="mt-6 p-3 bg-slate-50 rounded-md border border-slate-100"
-            >
-                <label
-                    for="model"
-                    class="block text-xs font-medium text-slate-500 mb-2"
-                    >Model</label
-                >
-                <select
-                    id="model"
-                    bind:value={selectedModel}
-                    class="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md bg-white mb-3"
-                >
-                    {#each availableModels as model}
-                        <option value={model.id}>{model.name}</option>
-                    {/each}
-                </select>
-                
-                <label
-                    for="apikey"
-                    class="block text-xs font-medium text-slate-500 mb-2"
-                    >Gemini API Key</label
-                >
-                <input
-                    id="apikey"
-                    type="password"
-                    bind:value={apiKey}
-                    class="input-field mb-2"
-                    placeholder="AIza..."
-                />
-
-                <button
-                    class="w-full btn-secondary text-xs"
-                    onclick={connectGemini}
-                    disabled={isGeminiConnected}
-                >
-                    {isGeminiConnected ? "✓ Connected" : "Connect"}
+        <!-- Knowledge Graph Section -->
+        <div class="p-4 flex-1">
+            <div class="section-header">
+                <span class="section-title">Knowledge Graph</span>
+                <button class="icon-btn" onclick={() => activeTab = 'settings'}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
                 </button>
             </div>
-
-            <!-- Station 1: Audio Controls -->
-            <div
-                class="mt-4 p-3 bg-slate-50 rounded-md border border-slate-100"
-            >
-                <span class="block text-xs font-medium text-slate-500 mb-2"
-                    >Capture Source</span
-                >
-                <div class="flex gap-1 mb-3">
-                    <button
-                        class="flex-1 text-xs px-2 py-1 rounded {captureMode === 'mic' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'}"
-                        onclick={() => setCaptureMode('mic')}
-                    >
-                        🎤 Mic
-                    </button>
-                    <button
-                        class="flex-1 text-xs px-2 py-1 rounded {captureMode === 'system' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'}"
-                        onclick={() => setCaptureMode('system')}
-                    >
-                        🔊 System
-                    </button>
-                    <button
-                        class="flex-1 text-xs px-2 py-1 rounded {captureMode === 'both' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'}"
-                        onclick={() => setCaptureMode('both')}
-                    >
-                        📻 Both
-                    </button>
-                </div>
-                
-                <!-- Volume Meter -->
-                <span class="block text-xs font-medium text-slate-500 mb-1"
-                    >Audio Level</span
-                >
-                <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                        class="h-full transition-all duration-75 {currentVolume > 0.5 ? 'bg-red-500' : currentVolume > 0.1 ? 'bg-green-500' : 'bg-slate-400'}"
-                        style="width: {Math.min(currentVolume * 500, 100)}%"
-                    ></div>
-                </div>
-                <div class="text-xs text-slate-400 mt-1 text-right">
-                    {isRecording ? (currentVolume * 100).toFixed(1) + ' dB' : 'Idle'}
+            
+            <div class="sidebar-card h-48">
+                <div class="relative h-full">
+                    <img src="/knowledge_graph_bg.png" alt="Knowledge Graph" class="w-full h-full object-cover opacity-70" />
+                    <div class="absolute inset-0 bg-gradient-to-t from-[#0d1117] via-transparent to-transparent"></div>
+                    <div class="absolute top-3 left-3 right-3">
+                        <span class="text-sm font-medium text-cyan-300">Digital Mycelium</span>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Session List (Mini) -->
-        <div class="p-4 border-t border-slate-200 bg-slate-50/50">
+        <!-- Navigation Icons -->
+        <div class="p-4 flex justify-center gap-4 border-t border-cyan-500/10">
+            <button class="nav-icon {activeTab === 'transcript' ? 'active' : ''}" onclick={() => activeTab = 'transcript'}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="4 17 10 11 4 5"></polyline>
+                    <line x1="12" y1="19" x2="20" y2="19"></line>
+                </svg>
+            </button>
+            <button class="nav-icon {activeTab === 'graph' ? 'active' : ''}" onclick={() => activeTab = 'graph'}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                    <polyline points="2 17 12 22 22 17"></polyline>
+                    <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+            </button>
+            <button class="nav-icon {activeTab === 'analytics' ? 'active' : ''}" onclick={() => activeTab = 'analytics'}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Session Manager -->
+        <div class="p-4 border-t border-cyan-500/10">
             <SessionManager
                 {currentSession}
                 onSessionLoad={handleSessionLoad}
@@ -585,311 +489,341 @@
 
     <!-- MAIN CONTENT -->
     <div class="flex-1 flex flex-col min-w-0">
-        <!-- HEADER -->
-        <div
-            class="h-16 px-6 bg-white border-b border-slate-200 flex items-center justify-between"
-        >
+        <!-- HEADER BAR -->
+        <div class="h-16 px-6 flex items-center justify-between border-b border-cyan-500/10 bg-[#0d1117]/50">
             <div class="flex items-center gap-3">
-                <span
-                    class="inline-flex h-2.5 w-2.5 rounded-full {isRecording ||
-                    isGeminiConnected
-                        ? 'bg-green-500'
-                        : 'bg-slate-300'}"
-                ></span>
-                <span class="text-sm font-medium text-slate-700">{status}</span>
+                <span class="status-dot {isRecording ? 'status-dot-recording' : 'status-dot-ready'}"></span>
+                <span class="text-sm font-medium text-slate-300">{status}</span>
                 {#if isRecording}
-                    <span
-                        class="ml-2 badge bg-red-100 text-red-700 border border-red-200"
-                        >LIVE</span
-                    >
+                    <span class="badge-error text-xs px-2 py-1 rounded">LIVE</span>
                 {/if}
             </div>
 
-            <div class="flex items-center gap-4">
-                <button
-                    class="{isRecording
-                        ? 'bg-red-600 hover:bg-red-700 text-white'
-                        : 'btn-primary'} px-4 py-2 rounded-md font-medium transition-colors"
-                    onclick={toggleCapture}
-                >
-                    {isRecording ? "Stop Recording" : "Start Recording"}
-                </button>
-            </div>
+            <button
+                class="{isRecording ? 'btn-recording' : 'btn-primary'}"
+                onclick={toggleCapture}
+            >
+                {isRecording ? "Stop Recording" : "Start Recording"}
+            </button>
         </div>
 
         <!-- CONTENT AREA -->
-        <div class="flex-1 overflow-auto bg-slate-50 p-6">
-            <div class="max-w-4xl mx-auto h-full">
+        <div class="flex-1 overflow-auto p-6">
+            <div class="max-w-5xl mx-auto space-y-6">
                 {#if !isRunningInTauri}
-                    <div class="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3 text-amber-800 shadow-sm">
+                    <div class="glass-card p-4 flex items-center gap-3 border-yellow-500/30">
                         <span class="text-2xl">⚠️</span>
                         <div class="flex-1">
-                            <p class="font-bold">Running in Browser Mode</p>
-                            <p class="text-sm opacity-90">Native features like audio capture and system integration are disabled. Use the simulation tool or open the app via <code>npm run tauri dev</code>.</p>
+                            <p class="font-bold text-yellow-400">Web Preview Mode</p>
+                            <p class="text-sm text-slate-400">Native features disabled. Run <code class="bg-dark-700 px-1 rounded">npm run tauri dev</code> for full functionality.</p>
                         </div>
                     </div>
                 {/if}
 
-                {#if activeTab === "transcript"}
-                    <!-- Search Bar -->
-                    <div class="mb-4 flex gap-2">
+                <!-- Search Bar -->
+                <div class="flex gap-3">
+                    <div class="flex-1 relative">
+                        <svg class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
                         <input
                             type="text"
-                            placeholder="🔍 Search transcripts..."
+                            placeholder="Search transcripts..."
                             bind:value={searchQuery}
-                            class="flex-1 px-4 py-2 rounded-lg border border-slate-200 focus:border-slate-400 focus:ring-1 focus:ring-slate-400 outline-none"
+                            class="search-input"
                         />
-                        <select
-                            bind:value={searchFilter}
-                            class="px-3 py-2 rounded-lg border border-slate-200 bg-white"
-                        >
-                            <option value="all">All</option>
-                            <option value="speaker">By Speaker</option>
-                            <option value="category">By Category</option>
-                        </select>
                     </div>
-                    
-                    <!-- Latency Indicator -->
-                    {#if latencyMs > 0}
-                        <div class="mb-2 text-xs text-slate-400 flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Latency: {latencyMs}ms
-                        </div>
-                    {/if}
-                    
-                    <!-- Typing Indicator -->
-                    {#if isTyping}
-                        <div class="mb-4 p-3 bg-slate-100 rounded-lg border border-slate-200 animate-pulse">
-                            <div class="flex items-center gap-2 text-slate-500">
-                                <span class="flex gap-1">
-                                    <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></span>
-                                    <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></span>
-                                    <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
-                                </span>
-                                <span class="text-sm">Processing...</span>
-                            </div>
-                        </div>
-                    {/if}
+                    <select bind:value={searchFilter} class="select-field w-28">
+                        <option value="all">All</option>
+                        <option value="speaker">By Speaker</option>
+                        <option value="category">By Category</option>
+                    </select>
+                </div>
 
-                    {#if transcripts.length === 0}
-                        <div
-                            class="h-full flex flex-col items-center justify-center text-slate-400"
-                        >
-                            <span class="mb-2 text-4xl font-light opacity-50"
-                                >Transcription</span
-                            >
-                            <p>No transcripts yet. Start recording to begin.</p>
+                {#if activeTab === "transcript"}
+                    <!-- The Gemini Conduit Card -->
+                    <div class="content-card">
+                        <div class="content-card-header">
+                            <span class="text-sm font-medium text-slate-200">The Gemini Conduit</span>
+                            <button class="icon-btn">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="1"></circle>
+                                    <circle cx="19" cy="12" r="1"></circle>
+                                    <circle cx="5" cy="12" r="1"></circle>
+                                </svg>
+                            </button>
                         </div>
-                    {:else}
-                        <div class="space-y-3 pb-12">
-                            {#each transcripts.filter(t => 
-                                searchQuery === "" || 
-                                t.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                t.speaker.toLowerCase().includes(searchQuery.toLowerCase())
-                            ) as t (t.id)}
-                                {@const toneColor = {
-                                    'URGENT': 'border-l-red-500 bg-red-50',
-                                    'FRUSTRATED': 'border-l-orange-500 bg-orange-50',
-                                    'EXCITED': 'border-l-yellow-500 bg-yellow-50',
-                                    'POSITIVE': 'border-l-green-500 bg-green-50',
-                                    'NEGATIVE': 'border-l-red-400 bg-red-50',
-                                    'HESITANT': 'border-l-purple-500 bg-purple-50',
-                                    'DOMINANT': 'border-l-blue-700 bg-blue-50',
-                                    'EMPATHETIC': 'border-l-pink-500 bg-pink-50',
-                                    'NEUTRAL': 'border-l-slate-300 bg-white',
-                                }[t.tone || 'NEUTRAL'] || 'border-l-slate-300 bg-white'}
-                                <div
-                                    class="p-4 rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-all border-l-4 {toneColor} {t.isPartial ? 'opacity-75' : ''}"
-                                >
-                                    <div
-                                        class="flex items-start justify-between mb-1"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            <span
-                                                class="font-bold text-slate-800"
-                                                >{t.speaker}</span
-                                            >
-                                            <span class="text-xs text-slate-400"
-                                                >{t.timestamp}</span
-                                            >
-                                            {#if t.isPartial}
-                                                <span class="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">
-                                                    Processing...
-                                                </span>
-                                            {/if}
-                                        </div>
-                                        <div class="flex gap-1">
-                                            {#if t.tone}
-                                                <span
-                                                    class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600"
-                                                    >{t.tone}</span
-                                                >
-                                            {/if}
-                                            {#if t.confidence}
-                                                <span
-                                                    class="text-xs px-2 py-0.5 rounded-full {t.confidence > 0.8 ? 'bg-green-100 text-green-700' : t.confidence > 0.5 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}"
-                                                    >{(t.confidence * 100).toFixed(0)}%</span
-                                                >
-                                            {/if}
-                                        </div>
-                                    </div>
-                                    <p
-                                        class="text-slate-700 leading-relaxed text-sm lg:text-base"
-                                    >
-                                        {t.text}
-                                    </p>
-                                    {#if t.category && t.category.length > 0}
-                                        <div class="mt-2 flex gap-1 flex-wrap">
-                                            {#each t.category as cat}
-                                                <span class="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-600">
-                                                    {cat}
-                                                </span>
-                                            {/each}
-                                        </div>
-                                    {/if}
-                                </div>
-                            {/each}
-                        </div>
-                    {/if}
-                {:else if activeTab === "graph"}
-                    <div
-                        class="h-full bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden relative"
-                    >
-                        <KnowledgeGraph nodes={graphNodes} edges={graphEdges} />
-                        {#if graphNodes.length === 0}
-                            <div
-                                class="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400"
-                            >
-                                Graph Empty
-                            </div>
-                        {/if}
+                        <img src="/gemini_conduit.png" alt="Gemini Conduit" class="content-card-image" />
                     </div>
-                {:else if activeTab === "alerts"}
-                    <div class="space-y-4">
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-medium text-slate-800">🔔 Intelligence Alerts</h3>
-                            <button 
-                                class="text-sm px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 transition-colors"
-                                onclick={() => alerts = []}
-                            >
-                                Clear All
+
+                    <!-- Psychosomatic Engine - Transcription -->
+                    <div class="content-card">
+                        <div class="content-card-header">
+                            <span class="text-sm font-medium text-slate-200">Psychosomatic Engine</span>
+                            <button class="icon-btn">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="1"></circle>
+                                    <circle cx="19" cy="12" r="1"></circle>
+                                    <circle cx="5" cy="12" r="1"></circle>
+                                </svg>
                             </button>
                         </div>
                         
-                        {#if alerts.length === 0}
-                            <div class="text-center py-12 text-slate-400">
-                                <span class="text-4xl mb-4 block">🔕</span>
-                                <p>No alerts yet. Alerts will appear here when important events are detected.</p>
-                            </div>
-                        {:else}
-                            {#each alerts as alert}
-                                <div class="p-4 rounded-lg border {
-                                    alert.severity === 'critical' ? 'bg-red-50 border-red-200' :
-                                    alert.severity === 'warning' ? 'bg-yellow-50 border-yellow-200' :
-                                    'bg-blue-50 border-blue-200'
-                                }">
-                                    <div class="flex items-start gap-3">
-                                        <span class="text-lg">
-                                            {alert.severity === 'critical' ? '🚨' : alert.severity === 'warning' ? '⚠️' : 'ℹ️'}
-                                        </span>
-                                        <div class="flex-1">
-                                            <div class="flex justify-between">
-                                                <span class="font-medium text-slate-800">{alert.type}</span>
-                                                <span class="text-xs text-slate-400">{alert.timestamp}</span>
+                        <div class="p-6">
+                            <h2 class="text-3xl font-light text-slate-100 text-center mb-6 text-glow-cyan">
+                                Transcription
+                            </h2>
+                            
+                            {#if transcripts.length === 0}
+                                <div class="text-center py-8">
+                                    <p class="text-lg text-slate-400">No transcripts yet. Start recording to begin.</p>
+                                </div>
+                            {:else}
+                                <div class="space-y-4 max-h-64 overflow-y-auto">
+                                    {#each transcripts.slice(-5).reverse() as t (t.id)}
+                                        <div class="transcription-area">
+                                            <p class="transcription-text">
+                                                {t.text}
+                                            </p>
+                                            <div class="flex items-center gap-2 mt-3 text-xs text-slate-500">
+                                                <span>{t.speaker}</span>
+                                                <span>•</span>
+                                                <span>{t.timestamp}</span>
+                                                {#if t.tone}
+                                                    <span class="badge-cyan ml-2">{t.tone}</span>
+                                                {/if}
                                             </div>
-                                            <p class="text-sm text-slate-600 mt-1">{alert.message}</p>
                                         </div>
-                                    </div>
+                                    {/each}
                                 </div>
-                            {/each}
-                        {/if}
-                    </div>
-                {:else if activeTab === "analytics"}
-                    <div class="space-y-6">
-                        <h3 class="text-lg font-medium text-slate-800">📊 Meeting Analytics</h3>
-                        
-                        <!-- Summary Stats -->
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div class="bg-white p-4 rounded-lg border border-slate-200 text-center">
-                                <div class="text-2xl font-bold text-slate-800">{transcripts.length}</div>
-                                <div class="text-xs text-slate-500 mt-1">Transcripts</div>
-                            </div>
-                            <div class="bg-white p-4 rounded-lg border border-slate-200 text-center">
-                                <div class="text-2xl font-bold text-slate-800">{graphNodes.length}</div>
-                                <div class="text-xs text-slate-500 mt-1">Entities</div>
-                            </div>
-                            <div class="bg-white p-4 rounded-lg border border-slate-200 text-center">
-                                <div class="text-2xl font-bold text-green-600">
-                                    {transcripts.filter(t => t.category?.includes('TASK')).length}
+                            {/if}
+                            
+                            <!-- Cyber Eye Visual -->
+                            <div class="flex justify-end mt-6">
+                                <div class="w-24 h-24 rounded-lg overflow-hidden border border-cyan-500/20">
+                                    <img src="/cyber_eye.png" alt="AI Vision" class="w-full h-full object-cover opacity-70" />
                                 </div>
-                                <div class="text-xs text-slate-500 mt-1">Tasks Found</div>
-                            </div>
-                            <div class="bg-white p-4 rounded-lg border border-slate-200 text-center">
-                                <div class="text-2xl font-bold text-blue-600">
-                                    {transcripts.filter(t => t.category?.includes('DECISION')).length}
-                                </div>
-                                <div class="text-xs text-slate-500 mt-1">Decisions</div>
                             </div>
                         </div>
-                        
-                        <!-- Tone Distribution -->
-                        <div class="bg-white p-4 rounded-lg border border-slate-200">
-                            <h4 class="text-sm font-medium text-slate-700 mb-3">Tone Distribution</h4>
-                            <div class="space-y-2">
-                                {#each ['NEUTRAL', 'POSITIVE', 'URGENT', 'FRUSTRATED'] as tone}
-                                    {@const count = transcripts.filter(t => t.tone === tone).length}
-                                    {@const pct = transcripts.length > 0 ? (count / transcripts.length * 100) : 0}
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-xs w-20 text-slate-600">{tone}</span>
-                                        <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div 
-                                                class="h-full bg-slate-500 rounded-full transition-all"
-                                                style="width: {pct}%"
-                                            ></div>
+                    </div>
+
+                {:else if activeTab === "graph"}
+                    <div class="content-card h-[500px]">
+                        <div class="content-card-header">
+                            <span class="text-sm font-medium text-slate-200">Knowledge Graph Visualization</span>
+                            <button class="icon-btn" onclick={simulateIntelligence}>
+                                <span class="text-cyan-400">+ Add Node</span>
+                            </button>
+                        </div>
+                        <div class="h-full p-4">
+                            <KnowledgeGraph nodes={graphNodes} edges={graphEdges} />
+                        </div>
+                    </div>
+
+                {:else if activeTab === "alerts"}
+                    <div class="content-card">
+                        <div class="content-card-header">
+                            <span class="text-sm font-medium text-slate-200">🔔 Intelligence Alerts</span>
+                            <button class="btn-ghost text-xs" onclick={() => alerts = []}>Clear All</button>
+                        </div>
+                        <div class="p-6 space-y-3 max-h-96 overflow-y-auto">
+                            {#if alerts.length === 0}
+                                <div class="text-center py-12 text-slate-500">
+                                    <span class="text-4xl mb-4 block">🔕</span>
+                                    <p>No alerts yet. Alerts appear when important events are detected.</p>
+                                </div>
+                            {:else}
+                                {#each alerts as alert}
+                                    <div class="glass-card p-4 {
+                                        alert.severity === 'critical' ? 'border-red-500/30' :
+                                        alert.severity === 'warning' ? 'border-yellow-500/30' :
+                                        'border-cyan-500/30'
+                                    }">
+                                        <div class="flex items-start gap-3">
+                                            <span class="text-lg">
+                                                {alert.severity === 'critical' ? '🚨' : alert.severity === 'warning' ? '⚠️' : 'ℹ️'}
+                                            </span>
+                                            <div class="flex-1">
+                                                <div class="flex justify-between">
+                                                    <span class="font-medium text-slate-200">{alert.type}</span>
+                                                    <span class="text-xs text-slate-500">{alert.timestamp}</span>
+                                                </div>
+                                                <p class="text-sm text-slate-400 mt-1">{alert.message}</p>
+                                            </div>
                                         </div>
-                                        <span class="text-xs text-slate-400 w-8">{count}</span>
                                     </div>
                                 {/each}
+                            {/if}
+                        </div>
+                    </div>
+
+                {:else if activeTab === "analytics"}
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-3xl font-bold text-cyan-400">{transcripts.length}</div>
+                            <div class="text-xs text-slate-500 mt-1">Transcripts</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-3xl font-bold text-cyan-400">{graphNodes.length}</div>
+                            <div class="text-xs text-slate-500 mt-1">Entities</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-3xl font-bold text-green-400">
+                                {transcripts.filter(t => t.category?.includes('TASK')).length}
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1">Tasks Found</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-3xl font-bold text-blue-400">
+                                {transcripts.filter(t => t.category?.includes('DECISION')).length}
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1">Decisions</div>
+                        </div>
+                    </div>
+                    
+                    <div class="glass-card p-6">
+                        <h4 class="text-sm font-medium text-slate-200 mb-4">Performance Metrics</h4>
+                        <div class="grid grid-cols-3 gap-4 text-center">
+                            <div>
+                                <div class="text-2xl font-bold text-green-400">{latencyMs}ms</div>
+                                <div class="text-xs text-slate-500">Current Latency</div>
+                            </div>
+                            <div>
+                                <div class="text-2xl font-bold {isGeminiConnected ? 'text-green-400' : 'text-red-400'}">
+                                    {isGeminiConnected ? '✓' : '✗'}
+                                </div>
+                                <div class="text-xs text-slate-500">API Connected</div>
+                            </div>
+                            <div>
+                                <div class="text-2xl font-bold {isRecording ? 'text-red-400' : 'text-slate-500'}">
+                                    {isRecording ? '🔴' : '⚪'}
+                                </div>
+                                <div class="text-xs text-slate-500">Recording</div>
+                            </div>
+                        </div>
+                    </div>
+
+                {:else if activeTab === "settings"}
+                    <div class="glass-card p-6">
+                        <h3 class="text-lg font-medium text-slate-200 mb-6">Audio & Processing Controls</h3>
+                        
+                        <!-- Model Selection -->
+                        <div class="mb-6">
+                            <label class="block text-xs text-slate-400 mb-2">AI Model</label>
+                            <select bind:value={selectedModel} class="select-field w-full">
+                                {#each availableModels as model}
+                                    <option value={model.id}>{model.name}</option>
+                                {/each}
+                            </select>
+                        </div>
+                        
+                        <!-- API Key -->
+                        <div class="mb-6">
+                            <label class="block text-xs text-slate-400 mb-2">Gemini API Key</label>
+                            <div class="flex gap-2">
+                                <input
+                                    type="password"
+                                    bind:value={apiKey}
+                                    class="input-field flex-1"
+                                    placeholder="AIza..."
+                                />
+                                <button
+                                    class="btn-secondary"
+                                    onclick={connectGemini}
+                                    disabled={isGeminiConnected}
+                                >
+                                    {isGeminiConnected ? "✓ Connected" : "Connect"}
+                                </button>
                             </div>
                         </div>
                         
-                        <!-- Latency Stats -->
-                        <div class="bg-white p-4 rounded-lg border border-slate-200">
-                            <h4 class="text-sm font-medium text-slate-700 mb-3">Performance Metrics</h4>
-                            <div class="grid grid-cols-3 gap-4 text-center">
-                                <div>
-                                    <div class="text-lg font-bold text-green-600">{latencyMs}ms</div>
-                                    <div class="text-xs text-slate-500">Current Latency</div>
-                                </div>
-                                <div>
-                                    <div class="text-lg font-bold text-slate-600">
-                                        {isGeminiConnected ? '✓' : '✗'}
-                                    </div>
-                                    <div class="text-xs text-slate-500">API Connected</div>
-                                </div>
-                                <div>
-                                    <div class="text-lg font-bold text-slate-600">
-                                        {isRecording ? '🔴' : '⚪'}
-                                    </div>
-                                    <div class="text-xs text-slate-500">Recording</div>
-                                </div>
+                        <!-- Capture Source -->
+                        <div class="mb-6">
+                            <label class="block text-xs text-slate-400 mb-2">Capture Source</label>
+                            <div class="flex gap-2">
+                                <button
+                                    class="{captureMode === 'mic' ? 'btn-primary' : 'btn-secondary'} flex-1"
+                                    onclick={() => setCaptureMode('mic')}
+                                >
+                                    🎤 Mic
+                                </button>
+                                <button
+                                    class="{captureMode === 'system' ? 'btn-primary' : 'btn-secondary'} flex-1"
+                                    onclick={() => setCaptureMode('system')}
+                                >
+                                    🔊 System
+                                </button>
+                                <button
+                                    class="{captureMode === 'both' ? 'btn-primary' : 'btn-secondary'} flex-1"
+                                    onclick={() => setCaptureMode('both')}
+                                >
+                                    📻 Both
+                                </button>
                             </div>
                         </div>
+                        
+                        <!-- Audio Level -->
+                        <div class="mb-6">
+                            <label class="block text-xs text-slate-400 mb-2">Audio Level</label>
+                            <div class="h-3 bg-dark-700 rounded-full overflow-hidden">
+                                <div 
+                                    class="h-full transition-all duration-75 {currentVolume > 0.5 ? 'bg-red-500' : currentVolume > 0.1 ? 'bg-green-500' : 'bg-slate-600'}"
+                                    style="width: {Math.min(currentVolume * 500, 100)}%"
+                                ></div>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1 text-right">
+                                {isRecording ? (currentVolume * 100).toFixed(1) + ' dB' : 'Idle'}
+                            </div>
+                        </div>
+                        
+                        <GodControls onSettingsChange={handleSettingsChange} />
                     </div>
-                {:else if activeTab === "settings"}
-                    <div class="space-y-6">
-                        <section>
-                            <h3 class="text-lg font-medium text-slate-800 mb-4">
-                                Audio & Processing Controls
-                            </h3>
-                            <GodControls
-                                onSettingsChange={handleSettingsChange}
-                            />
-                        </section>
-                    </div>
+
                 {:else if activeTab === "diagnostics"}
                     <Diagnostics {isRecording} {isGeminiConnected} />
                 {/if}
+            </div>
+        </div>
+
+        <!-- BOTTOM ACTION BAR -->
+        <div class="h-20 px-6 flex items-center justify-center gap-4 border-t border-cyan-500/10 bg-[#0d1117]/50">
+            <button class="btn-action" onclick={simulateIntelligence}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                </svg>
+                Collapse State
+            </button>
+            <button class="btn-action" onclick={simulateIntelligence}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <circle cx="19" cy="5" r="2"></circle>
+                    <circle cx="5" cy="5" r="2"></circle>
+                    <circle cx="19" cy="19" r="2"></circle>
+                    <circle cx="5" cy="19" r="2"></circle>
+                    <line x1="12" y1="9" x2="12" y2="3"></line>
+                    <line x1="14.5" y1="13.5" x2="19" y2="17"></line>
+                    <line x1="9.5" y1="13.5" x2="5" y2="17"></line>
+                    <line x1="14.5" y1="10.5" x2="19" y2="7"></line>
+                    <line x1="9.5" y1="10.5" x2="5" y2="7"></line>
+                </svg>
+                Extract Memories
+            </button>
+            <button class="btn-action">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                Summary
+            </button>
+            
+            <!-- Diamond Icon -->
+            <div class="ml-4 diamond-icon">
+                <span class="text-cyan-400">◆</span>
             </div>
         </div>
     </div>

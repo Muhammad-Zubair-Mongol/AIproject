@@ -75,11 +75,12 @@
                 format: exportFormat,
             })) as string;
 
-            // Use Tauri dialog to save file
-            const extensions = {
+            const extensions: Record<string, string[]> = {
                 json: ["json"],
                 csv: ["csv"],
                 markdown: ["md"],
+                graphml: ["graphml"],
+                entities: ["json"],
             };
 
             const filePath = await save({
@@ -93,7 +94,6 @@
             });
 
             if (filePath) {
-                // Write content to file using Tauri fs plugin
                 const { writeTextFile } = await import("@tauri-apps/plugin-fs");
                 await writeTextFile(filePath, content);
                 console.log("Exported to:", filePath);
@@ -128,233 +128,244 @@
     $: if (showLoadDialog) loadSessions();
 </script>
 
-<div class="space-y-2">
-    <!-- Action Buttons -->
-    <div class="flex gap-2 flex-wrap">
-        <button
-            class="god-button flex-1"
-            onclick={() => (showSaveDialog = true)}
-        >
-            💾 Save
-        </button>
-        <button
-            class="god-button flex-1"
-            onclick={() => (showLoadDialog = true)}
-        >
-            📂 Load
-        </button>
-        <button
-            class="god-button flex-1"
-            onclick={() => (showExportDialog = true)}
-        >
-            📤 Export
-        </button>
-        <button
-            class="god-button flex-1"
-            onclick={generateSummary}
-            disabled={isGeneratingSummary}
-        >
-            {isGeneratingSummary ? '⏳' : '📊'} Summary
-        </button>
-    </div>
+<div class="grid grid-cols-4 gap-2">
+    <button
+        class="flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-300 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300"
+        onclick={() => (showSaveDialog = true)}
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+        </svg>
+        <span class="text-xs">Save</span>
+    </button>
+    <button
+        class="flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-300 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300"
+        onclick={() => (showLoadDialog = true)}
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span class="text-xs">Load</span>
+    </button>
+    <button
+        class="flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-300 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300"
+        onclick={() => (showExportDialog = true)}
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <span class="text-xs">Export</span>
+    </button>
+    <button
+        class="flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-300 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300"
+        onclick={generateSummary}
+        disabled={isGeneratingSummary}
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="20" x2="18" y2="10"></line>
+            <line x1="12" y1="20" x2="12" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
+        <span class="text-xs">{isGeneratingSummary ? '...' : 'Summary'}</span>
+    </button>
+</div>
 
-    <!-- Save Dialog -->
-    {#if showSaveDialog}
-        <div
-            class="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-        >
-            <div class="god-panel p-6 max-w-md w-full mx-4">
-                <h3 class="text-lg font-bold text-green-300 mb-4">
-                    Save Session
-                </h3>
+<!-- Save Dialog -->
+{#if showSaveDialog}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="glass-card p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-bold text-slate-100 mb-4">
+                Save Session
+            </h3>
 
-                <label
-                    for="session-title"
-                    class="text-xs text-green-400 block mb-2"
-                    >Session Title</label
-                >
-                <input
-                    id="session-title"
-                    type="text"
-                    bind:value={sessionTitle}
-                    placeholder="Enter session title..."
-                    class="god-input mb-4"
-                />
+            <label for="session-title" class="text-xs text-slate-400 block mb-2">
+                Session Title
+            </label>
+            <input
+                id="session-title"
+                type="text"
+                bind:value={sessionTitle}
+                placeholder="Enter session title..."
+                class="input-field mb-4"
+            />
 
-                <div class="flex gap-2">
-                    <button
-                        class="god-button flex-1"
-                        onclick={saveCurrentSession}
-                        disabled={isSaving}
-                    >
-                        {isSaving ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                        class="god-button flex-1 opacity-50"
-                        onclick={() => (showSaveDialog = false)}
-                    >
-                        Cancel
-                    </button>
-                </div>
-            </div>
-        </div>
-    {/if}
-
-    <!-- Load Dialog -->
-    {#if showLoadDialog}
-        <div
-            class="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-        >
-            <div
-                class="god-panel p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
-            >
-                <h3 class="text-lg font-bold text-green-300 mb-4">
-                    Load Session
-                </h3>
-
-                {#if sessions.length === 0}
-                    <p class="text-sm text-green-600 text-center py-8">
-                        No saved sessions found
-                    </p>
-                {:else}
-                    <div class="space-y-2">
-                        {#each sessions as session}
-                            <div
-                                class="border border-green-900/50 rounded p-3 hover:bg-green-900/10 transition-all"
-                            >
-                                <div
-                                    class="flex items-start justify-between mb-2"
-                                >
-                                    <div>
-                                        <h4
-                                            class="text-sm font-bold text-green-300"
-                                        >
-                                            {session.metadata.title}
-                                        </h4>
-                                        <p class="text-xs text-green-600">
-                                            {new Date(
-                                                session.created_at,
-                                            ).toLocaleString()}
-                                        </p>
-                                    </div>
-                                    <div class="flex gap-2">
-                                        <button
-                                            class="text-xs px-2 py-1 bg-green-500/30 text-green-100 rounded border border-green-500 hover:bg-green-500/50"
-                                            onclick={() =>
-                                                loadSession(session.id)}
-                                        >
-                                            Load
-                                        </button>
-                                        <button
-                                            class="text-xs px-2 py-1 bg-red-500/30 text-red-100 rounded border border-red-500 hover:bg-red-500/50"
-                                            onclick={() =>
-                                                deleteSession(session.id)}
-                                        >
-                                            Delete
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="text-xs text-green-700 flex gap-4">
-                                    <span
-                                        >📝 {session.metadata.total_transcripts}
-                                        transcripts</span
-                                    >
-                                    <span
-                                        >🕸️ {session.graph_nodes?.length || 0} nodes</span
-                                    >
-                                    <span
-                                        >⏱️ {session.metadata
-                                            .duration_seconds}s</span
-                                    >
-                                </div>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-
+            <div class="flex gap-2">
                 <button
-                    class="god-button w-full mt-4"
-                    onclick={() => (showLoadDialog = false)}
+                    class="btn-primary flex-1"
+                    onclick={saveCurrentSession}
+                    disabled={isSaving}
                 >
-                    Close
+                    {isSaving ? "Saving..." : "Save"}
+                </button>
+                <button
+                    class="btn-secondary flex-1"
+                    onclick={() => (showSaveDialog = false)}
+                >
+                    Cancel
                 </button>
             </div>
         </div>
-    {/if}
+    </div>
+{/if}
 
-    <!-- Export Dialog -->
-    {#if showExportDialog}
-        <div
-            class="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-        >
-            <div class="god-panel p-6 max-w-md w-full mx-4">
-                <h3 class="text-lg font-bold text-green-300 mb-4">
-                    Export Session
-                </h3>
+<!-- Load Dialog -->
+{#if showLoadDialog}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="glass-card p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-slate-100 mb-4">
+                Load Session
+            </h3>
 
-                <div class="text-xs text-green-400 block mb-2">
-                    Export Format
+            {#if sessions.length === 0}
+                <p class="text-sm text-slate-500 text-center py-8">
+                    No saved sessions found
+                </p>
+            {:else}
+                <div class="space-y-2">
+                    {#each sessions as session}
+                        <div class="glass-card p-4 hover:border-cyan-500/30 transition-all cursor-pointer">
+                            <div class="flex items-start justify-between mb-2">
+                                <div>
+                                    <h4 class="text-sm font-bold text-slate-200">
+                                        {session.metadata.title}
+                                    </h4>
+                                    <p class="text-xs text-slate-500">
+                                        {new Date(session.created_at).toLocaleString()}
+                                    </p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button
+                                        class="btn-primary text-xs px-3 py-1"
+                                        onclick={() => loadSession(session.id)}
+                                    >
+                                        Load
+                                    </button>
+                                    <button
+                                        class="btn-ghost text-xs px-3 py-1 text-red-400 hover:text-red-300"
+                                        onclick={() => deleteSession(session.id)}
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="text-xs text-slate-500 flex gap-4">
+                                <span>📝 {session.metadata.total_transcripts} transcripts</span>
+                                <span>🕸️ {session.graph_nodes?.length || 0} nodes</span>
+                                <span>⏱️ {session.metadata.duration_seconds}s</span>
+                            </div>
+                        </div>
+                    {/each}
                 </div>
-                <div class="grid grid-cols-3 gap-2 mb-4">
-                    <button
-                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
-                        'json'
-                            ? 'bg-green-500/30 border-green-500 text-green-100'
-                            : 'bg-green-900/20 border-green-900 text-green-600'}"
-                        onclick={() => (exportFormat = "json")}
-                    >
-                        JSON
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
-                        'csv'
-                            ? 'bg-green-500/30 border-green-500 text-green-100'
-                            : 'bg-green-900/20 border-green-900 text-green-600'}"
-                        onclick={() => (exportFormat = "csv")}
-                    >
-                        CSV
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
-                        'markdown'
-                            ? 'bg-green-500/30 border-green-500 text-green-100'
-                            : 'bg-green-900/20 border-green-900 text-green-600'}"
-                        onclick={() => (exportFormat = "markdown")}
-                    >
-                        Markdown
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
-                        'graphml'
-                            ? 'bg-green-500/30 border-green-500 text-green-100'
-                            : 'bg-green-900/20 border-green-900 text-green-600'}"
-                        onclick={() => (exportFormat = "graphml")}
-                    >
-                        GraphML
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs rounded border transition-all {exportFormat ===
-                        'entities'
-                            ? 'bg-green-500/30 border-green-500 text-green-100'
-                            : 'bg-green-900/20 border-green-900 text-green-600'}"
-                        onclick={() => (exportFormat = "entities")}
-                    >
-                        Entities
-                    </button>
-                </div>
+            {/if}
 
-                <div class="flex gap-2">
-                    <button class="god-button flex-1" onclick={exportSession}>
-                        Export
-                    </button>
+            <button
+                class="btn-secondary w-full mt-4"
+                onclick={() => (showLoadDialog = false)}
+            >
+                Close
+            </button>
+        </div>
+    </div>
+{/if}
+
+<!-- Export Dialog -->
+{#if showExportDialog}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="glass-card p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-bold text-slate-100 mb-4">
+                Export Session
+            </h3>
+
+            <div class="text-xs text-slate-400 block mb-2">
+                Export Format
+            </div>
+            <div class="grid grid-cols-3 gap-2 mb-4">
+                {#each ['json', 'csv', 'markdown', 'graphml', 'entities'] as format}
                     <button
-                        class="god-button flex-1 opacity-50"
-                        onclick={() => (showExportDialog = false)}
+                        class="px-3 py-2 text-xs rounded-lg border transition-all {exportFormat === format
+                            ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                            : 'bg-dark-700 border-cyan-500/20 text-slate-400 hover:border-cyan-500/40'}"
+                        onclick={() => (exportFormat = format as any)}
                     >
-                        Cancel
+                        {format.toUpperCase()}
                     </button>
-                </div>
+                {/each}
+            </div>
+
+            <div class="flex gap-2">
+                <button class="btn-primary flex-1" onclick={exportSession}>
+                    Export
+                </button>
+                <button
+                    class="btn-secondary flex-1"
+                    onclick={() => (showExportDialog = false)}
+                >
+                    Cancel
+                </button>
             </div>
         </div>
-    {/if}
-</div>
+    </div>
+{/if}
+
+<!-- Summary Dialog -->
+{#if showSummaryDialog}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="glass-card p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 class="text-lg font-bold text-slate-100 mb-4">
+                Session Summary
+            </h3>
+
+            {#if sessionSummary}
+                <div class="space-y-4">
+                    <div class="glass-card p-4">
+                        <h4 class="text-sm font-medium text-cyan-400 mb-2">Overview</h4>
+                        <p class="text-sm text-slate-300">{sessionSummary.overview || 'No overview available'}</p>
+                    </div>
+                    
+                    {#if sessionSummary.key_points?.length > 0}
+                        <div class="glass-card p-4">
+                            <h4 class="text-sm font-medium text-cyan-400 mb-2">Key Points</h4>
+                            <ul class="text-sm text-slate-300 space-y-1">
+                                {#each sessionSummary.key_points as point}
+                                    <li class="flex gap-2">
+                                        <span class="text-cyan-400">•</span>
+                                        {point}
+                                    </li>
+                                {/each}
+                            </ul>
+                        </div>
+                    {/if}
+                    
+                    {#if sessionSummary.action_items?.length > 0}
+                        <div class="glass-card p-4">
+                            <h4 class="text-sm font-medium text-cyan-400 mb-2">Action Items</h4>
+                            <ul class="text-sm text-slate-300 space-y-1">
+                                {#each sessionSummary.action_items as item}
+                                    <li class="flex gap-2">
+                                        <span class="text-green-400">→</span>
+                                        {item}
+                                    </li>
+                                {/each}
+                            </ul>
+                        </div>
+                    {/if}
+                </div>
+            {:else}
+                <p class="text-sm text-slate-500 text-center py-8">
+                    No summary available
+                </p>
+            {/if}
+
+            <button
+                class="btn-secondary w-full mt-4"
+                onclick={() => (showSummaryDialog = false)}
+            >
+                Close
+            </button>
+        </div>
+    </div>
+{/if}

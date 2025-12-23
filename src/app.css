@@ -1,7 +1,29 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --font-sans: 'Inter', 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  
+  /* Dark theme colors - Cyan accent */
+  --color-dark-950: #0a0c0f;
+  --color-dark-900: #0d1117;
+  --color-dark-800: #161b22;
+  --color-dark-700: #1f252d;
+  --color-dark-600: #2a313c;
+  --color-dark-500: #3b4453;
+  
+  /* Cyan/Blue accent colors */
+  --color-accent-50: #e0f7ff;
+  --color-accent-100: #b3ecff;
+  --color-accent-200: #80dfff;
+  --color-accent-300: #4dd2ff;
+  --color-accent-400: #00c8ff;
+  --color-accent-500: #00b4e6;
+  --color-accent-600: #0095cc;
+  --color-accent-700: #0077b3;
+  --color-accent-800: #005999;
+  --color-accent-900: #003d80;
+  
+  /* Slate for text */
   --color-slate-50: #f8fafc;
   --color-slate-100: #f1f5f9;
   --color-slate-200: #e2e8f0;
@@ -9,22 +31,13 @@
   --color-slate-400: #94a3b8;
   --color-slate-500: #64748b;
   --color-slate-600: #475569;
-  --color-slate-700: #334155;
-  --color-slate-800: #1e293b;
-  --color-slate-900: #0f172a;
-
-  --color-primary-50: #eff6ff;
-  --color-primary-100: #dbeafe;
-  --color-primary-500: #3b82f6;
-  --color-primary-600: #2563eb;
-  --color-primary-700: #1d4ed8;
 }
 
 /* Global Styles */
 :root {
   font-family: var(--font-sans);
-  background-color: var(--color-slate-50);
-  color: var(--color-slate-900);
+  background-color: var(--color-dark-950);
+  color: var(--color-slate-200);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -34,27 +47,339 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  background: linear-gradient(135deg, #0a0c0f 0%, #0d1117 50%, #0f1419 100%);
 }
 
-/* Utility Components */
-.card {
-  @apply bg-white border border-slate-200 rounded-lg shadow-sm p-4;
+/* Glowing effects */
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 200, 255, 0.3), 0 0 40px rgba(0, 200, 255, 0.1);
 }
 
+.glow-cyan-subtle {
+  box-shadow: 0 0 10px rgba(0, 200, 255, 0.15);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 10px rgba(0, 200, 255, 0.5);
+}
+
+/* Custom card with glass effect */
+.glass-card {
+  background: linear-gradient(135deg, rgba(22, 27, 34, 0.95) 0%, rgba(13, 17, 23, 0.9) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+}
+
+.glass-card-hover:hover {
+  border-color: rgba(0, 200, 255, 0.35);
+  box-shadow: 0 0 15px rgba(0, 200, 255, 0.1);
+}
+
+/* Panel styling */
+.panel {
+  background: linear-gradient(180deg, rgba(22, 27, 34, 0.98) 0%, rgba(13, 17, 23, 0.95) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.1);
+  border-radius: 8px;
+}
+
+/* Sidebar styling */
+.sidebar {
+  background: linear-gradient(180deg, #0d1117 0%, #0a0c0f 100%);
+  border-right: 1px solid rgba(0, 200, 255, 0.1);
+}
+
+/* Primary Button - Cyan gradient */
 .btn-primary {
-  @apply px-4 py-2 bg-slate-900 text-white rounded-md font-medium text-sm hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-300;
+  background: linear-gradient(135deg, #00b4e6 0%, #00c8ff 100%);
+  color: #0d1117;
+  border: none;
 }
 
+.btn-primary:hover {
+  background: linear-gradient(135deg, #00c8ff 0%, #4dd2ff 100%);
+  box-shadow: 0 0 20px rgba(0, 200, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Secondary Button - Outline */
 .btn-secondary {
-  @apply px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-md font-medium text-sm hover:bg-slate-50 transition-colors;
+  @apply px-4 py-2 rounded-lg font-medium text-sm transition-all duration-300;
+  background: transparent;
+  color: #00c8ff;
+  border: 1px solid rgba(0, 200, 255, 0.4);
 }
 
+.btn-secondary:hover {
+  background: rgba(0, 200, 255, 0.1);
+  border-color: rgba(0, 200, 255, 0.6);
+  box-shadow: 0 0 15px rgba(0, 200, 255, 0.15);
+}
+
+/* Ghost Button */
+.btn-ghost {
+  @apply px-3 py-2 rounded-lg font-medium text-sm transition-all duration-300;
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid transparent;
+}
+
+.btn-ghost:hover {
+  background: rgba(0, 200, 255, 0.08);
+  color: #00c8ff;
+}
+
+/* Action Button - For bottom bar */
+.btn-action {
+  @apply px-6 py-3 rounded-lg font-medium text-sm transition-all duration-300 flex items-center gap-2;
+  background: rgba(22, 27, 34, 0.9);
+  color: #00c8ff;
+  border: 1px solid rgba(0, 200, 255, 0.3);
+}
+
+.btn-action:hover {
+  background: rgba(0, 200, 255, 0.1);
+  border-color: rgba(0, 200, 255, 0.5);
+  box-shadow: 0 0 15px rgba(0, 200, 255, 0.15);
+}
+
+/* Recording button - Red state */
+.btn-recording {
+  @apply px-5 py-2.5 rounded-lg font-semibold text-sm transition-all duration-300;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  animation: pulse-recording 2s infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+}
+
+/* Input Fields */
 .input-field {
-  @apply w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent;
+  @apply w-full px-4 py-3 rounded-lg text-sm transition-all duration-300;
+  background: rgba(13, 17, 23, 0.8);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+  color: #e2e8f0;
 }
 
+.input-field::placeholder {
+  color: #64748b;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: rgba(0, 200, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(0, 200, 255, 0.1);
+}
+
+/* Search Input */
+.search-input {
+  @apply w-full px-4 py-3 pl-12 rounded-lg text-sm transition-all duration-300;
+  background: rgba(13, 17, 23, 0.8);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+  color: #e2e8f0;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: rgba(0, 200, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(0, 200, 255, 0.1);
+}
+
+/* Select dropdown */
+.select-field {
+  @apply px-4 py-3 rounded-lg text-sm transition-all duration-300 appearance-none cursor-pointer;
+  background: rgba(13, 17, 23, 0.8);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+  color: #e2e8f0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2300c8ff'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 40px;
+}
+
+.select-field:focus {
+  outline: none;
+  border-color: rgba(0, 200, 255, 0.4);
+}
+
+/* Badge styling */
 .badge {
-  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-cyan {
+  background: rgba(0, 200, 255, 0.15);
+  color: #00c8ff;
+  border: 1px solid rgba(0, 200, 255, 0.3);
+}
+
+.badge-success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.badge-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.badge-warning {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+/* Content Card with image */
+.content-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(22, 27, 34, 0.95) 0%, rgba(13, 17, 23, 0.9) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+}
+
+.content-card-header {
+  @apply px-4 py-3 flex items-center justify-between;
+  background: rgba(13, 17, 23, 0.5);
+  border-bottom: 1px solid rgba(0, 200, 255, 0.1);
+}
+
+.content-card-image {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+/* Sidebar card with visual */
+.sidebar-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(22, 27, 34, 0.9) 0%, rgba(13, 17, 23, 0.85) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.12);
+  transition: all 0.3s ease;
+}
+
+.sidebar-card:hover {
+  border-color: rgba(0, 200, 255, 0.3);
+  box-shadow: 0 0 15px rgba(0, 200, 255, 0.08);
+}
+
+.sidebar-card-image {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+}
+
+/* Transcription area */
+.transcription-area {
+  @apply p-6 rounded-lg;
+  background: linear-gradient(135deg, rgba(22, 27, 34, 0.95) 0%, rgba(13, 17, 23, 0.9) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.15);
+}
+
+.transcription-text {
+  @apply text-lg leading-relaxed;
+  color: #e2e8f0;
+}
+
+.transcription-highlight {
+  color: #00c8ff;
+  text-decoration: line-through;
+  text-decoration-color: rgba(0, 200, 255, 0.5);
+}
+
+.transcription-emphasis {
+  color: #fbbf24;
+}
+
+.transcription-large {
+  @apply text-2xl font-light;
+  color: #e2e8f0;
+}
+
+/* Status indicator */
+.status-dot {
+  @apply w-2.5 h-2.5 rounded-full;
+}
+
+.status-dot-ready {
+  background: #00c8ff;
+  box-shadow: 0 0 8px rgba(0, 200, 255, 0.6);
+}
+
+.status-dot-recording {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  animation: pulse-status 1.5s infinite;
+}
+
+@keyframes pulse-status {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.7; }
+}
+
+/* Icon button */
+.icon-btn {
+  @apply p-2 rounded-lg transition-all duration-300;
+  color: #94a3b8;
+  background: transparent;
+}
+
+.icon-btn:hover {
+  background: rgba(0, 200, 255, 0.1);
+  color: #00c8ff;
+}
+
+/* Navigation icons */
+.nav-icon {
+  @apply w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-300 cursor-pointer;
+  color: #00c8ff;
+  font-size: 1.25rem;
+}
+
+.nav-icon:hover {
+  background: rgba(0, 200, 255, 0.1);
+}
+
+.nav-icon.active {
+  background: rgba(0, 200, 255, 0.15);
+  box-shadow: 0 0 10px rgba(0, 200, 255, 0.2);
+}
+
+/* Header section */
+.section-header {
+  @apply flex items-center justify-between mb-3;
+}
+
+.section-title {
+  @apply text-sm font-semibold;
+  color: #e2e8f0;
+}
+
+/* Language pill */
+.language-pill {
+  @apply px-3 py-1 rounded-full text-xs font-medium;
+  background: rgba(0, 200, 255, 0.15);
+  color: #00c8ff;
 }
 
 /* Custom Scrollbar for Webkit */
@@ -64,13 +389,97 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(13, 17, 23, 0.5);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 rounded-full;
+  background: rgba(0, 200, 255, 0.2);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-slate-400;
+  background: rgba(0, 200, 255, 0.4);
+}
+
+/* Slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 200, 255, 0.15);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #00c8ff;
+  margin-top: -6px;
+  box-shadow: 0 0 10px rgba(0, 200, 255, 0.5);
+}
+
+input[type="range"]:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 15px rgba(0, 200, 255, 0.7);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  @apply w-4 h-4 rounded cursor-pointer;
+  accent-color: #00c8ff;
+}
+
+/* Animation utilities */
+.animate-pulse-slow {
+  animation: pulse-slow 3s infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Fade transitions */
+.fade-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.3s ease;
+}
+
+/* Diamond icon */
+.diamond-icon {
+  width: 40px;
+  height: 40px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, rgba(0, 200, 255, 0.2) 0%, rgba(0, 200, 255, 0.05) 100%);
+  border: 1px solid rgba(0, 200, 255, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diamond-icon > * {
+  transform: rotate(-45deg);
 }

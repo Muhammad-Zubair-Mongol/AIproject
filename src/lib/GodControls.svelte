@@ -78,10 +78,10 @@
     }
 </script>
 
-<div class="card space-y-6">
+<div class="space-y-6">
     <!-- Confidence -->
     <div>
-        <label for="conf" class="block text-sm font-medium text-slate-700 mb-1">
+        <label for="conf" class="block text-xs text-slate-400 mb-2">
             Min Confidence Threshold
         </label>
         <div class="flex items-center gap-4">
@@ -93,9 +93,9 @@
                 step="0.05"
                 bind:value={confidenceThreshold}
                 onchange={updateSettings}
-                class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                class="w-full"
             />
-            <span class="text-sm font-mono text-slate-600 w-12 text-right">
+            <span class="text-sm font-mono text-cyan-400 w-12 text-right">
                 {(confidenceThreshold * 100).toFixed(0)}%
             </span>
         </div>
@@ -103,7 +103,7 @@
 
     <!-- VAD -->
     <div>
-        <label for="vad" class="block text-sm font-medium text-slate-700 mb-1">
+        <label for="vad" class="block text-xs text-slate-400 mb-2">
             Voice Activity Sensitivity
         </label>
         <div class="flex items-center gap-4">
@@ -115,33 +115,31 @@
                 step="0.1"
                 bind:value={vadSensitivity}
                 onchange={updateSettings}
-                class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                class="w-full"
             />
-            <span class="text-sm font-mono text-slate-600 w-12 text-right">
+            <span class="text-sm font-mono text-cyan-400 w-12 text-right">
                 {vadSensitivity}
             </span>
         </div>
     </div>
 
     <!-- Toggles -->
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-3">
         <input
             id="autoconnect"
             type="checkbox"
             bind:checked={autoConnect}
             onchange={updateSettings}
-            class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+            class="w-4 h-4 rounded"
         />
-        <label for="autoconnect" class="text-sm text-slate-700"
-            >Auto-connect on startup</label
-        >
+        <label for="autoconnect" class="text-sm text-slate-300">
+            Auto-connect on startup
+        </label>
     </div>
 
     <!-- Filters -->
-    <div class="pt-4 border-t border-slate-100">
-        <h4
-            class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3"
-        >
+    <div class="pt-4 border-t border-cyan-500/10">
+        <h4 class="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-3">
             Intelligence Filters
         </h4>
         <div class="grid grid-cols-2 gap-2">
@@ -152,25 +150,25 @@
                         type="checkbox"
                         bind:checked={cat.checked}
                         onchange={updateSettings}
-                        class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                        class="w-4 h-4 rounded"
                     />
-                    <label for={cat.id} class="text-sm text-slate-700"
-                        >{cat.label}</label
-                    >
+                    <label for={cat.id} class="text-sm text-slate-300">
+                        {cat.label}
+                    </label>
                 </div>
             {/each}
         </div>
     </div>
     
     <!-- Prediction Controls -->
-    <div class="pt-4 border-t border-slate-100">
-        <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+    <div class="pt-4 border-t border-cyan-500/10">
+        <h4 class="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-3">
             Prediction & Optimistic Mode
         </h4>
         
-        <div class="space-y-3">
+        <div class="space-y-4">
             <div>
-                <label for="pred" class="block text-sm font-medium text-slate-700 mb-1">
+                <label for="pred" class="block text-xs text-slate-400 mb-2">
                     Prediction Aggression
                 </label>
                 <div class="flex items-center gap-4">
@@ -182,23 +180,23 @@
                         step="0.1"
                         bind:value={predictionAggression}
                         onchange={updateSettings}
-                        class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                        class="w-full"
                     />
-                    <span class="text-sm font-mono text-slate-600 w-12 text-right">
+                    <span class="text-sm font-mono text-cyan-400 w-12 text-right">
                         {(predictionAggression * 100).toFixed(0)}%
                     </span>
                 </div>
             </div>
             
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-3">
                 <input
                     id="optimistic"
                     type="checkbox"
                     bind:checked={enableOptimistic}
                     onchange={updateSettings}
-                    class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                    class="w-4 h-4 rounded"
                 />
-                <label for="optimistic" class="text-sm text-slate-700">
+                <label for="optimistic" class="text-sm text-slate-300">
                     Enable Optimistic Predictions (Local)
                 </label>
             </div>
@@ -206,22 +204,22 @@
     </div>
     
     <!-- Manual Intelligence Injection -->
-    <div class="pt-4 border-t border-slate-100">
-        <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+    <div class="pt-4 border-t border-cyan-500/10">
+        <h4 class="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-3">
             Manual Intelligence Inject
         </h4>
         
-        <div class="space-y-2">
+        <div class="space-y-3">
             <input
                 type="text"
                 placeholder="Enter text to inject..."
                 bind:value={manualText}
-                class="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:border-slate-400 outline-none"
+                class="input-field"
             />
             <div class="flex gap-2">
                 <select
                     bind:value={manualCategory}
-                    class="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-md bg-white"
+                    class="select-field flex-1"
                 >
                     <option value="TASK">Task</option>
                     <option value="DECISION">Decision</option>
@@ -229,7 +227,7 @@
                     <option value="ACTION_ITEM">Action Item</option>
                 </select>
                 <button
-                    class="px-4 py-2 text-sm bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors"
+                    class="btn-primary"
                     onclick={injectIntelligence}
                 >
                     Inject
@@ -239,15 +237,27 @@
     </div>
     
     <!-- Keyboard Shortcuts Reference -->
-    <div class="pt-4 border-t border-slate-100">
-        <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+    <div class="pt-4 border-t border-cyan-500/10">
+        <h4 class="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-3">
             ⌨️ Keyboard Shortcuts
         </h4>
-        <div class="text-xs text-slate-600 space-y-1">
-            <div><kbd class="px-1 bg-slate-100 rounded">Ctrl+Shift+R</kbd> Toggle Recording</div>
-            <div><kbd class="px-1 bg-slate-100 rounded">Ctrl+Shift+G</kbd> Graph View</div>
-            <div><kbd class="px-1 bg-slate-100 rounded">Ctrl+Shift+A</kbd> Alerts</div>
-            <div><kbd class="px-1 bg-slate-100 rounded">Ctrl+Shift+T</kbd> Transcripts</div>
+        <div class="text-xs text-slate-400 space-y-1.5">
+            <div class="flex items-center gap-2">
+                <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-cyan-400 border border-cyan-500/20">Ctrl+Shift+R</kbd>
+                <span>Toggle Recording</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-cyan-400 border border-cyan-500/20">Ctrl+Shift+G</kbd>
+                <span>Graph View</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-cyan-400 border border-cyan-500/20">Ctrl+Shift+A</kbd>
+                <span>Alerts</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-cyan-400 border border-cyan-500/20">Ctrl+Shift+T</kbd>
+                <span>Transcripts</span>
+            </div>
         </div>
     </div>
 </div>
