@@ -17,7 +17,7 @@
     let testInterval: ReturnType<typeof setInterval> | null = null;
 
     // Settings
-    let captureMode = "mic";
+    let captureMode = "both";
     let confidenceThreshold = 0.7;
     let vadSensitivity = 0.5;
     let enableDebugMode = false;

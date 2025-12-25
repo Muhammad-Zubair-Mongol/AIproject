@@ -681,6 +681,33 @@ Return ONLY valid JSON, no markdown, no explanation.`;
                     summary: null,
                 };
 
+                // SMART: Pre-check API key before starting (3s timeout per key)
+                if (keyState.keys.length > 0) {
+                    status = "Checking API keys...";
+                    const keyResult = await keyManager.getNextWorkingKeyFast();
+                    if (!keyResult.success) {
+                        status = keyResult.message;
+                        console.error("[Recording] No working key found:", keyResult.message);
+                        setTimeout(() => { status = "Ready"; }, 3000);
+                        return;
+                    }
+                    isGeminiConnected = true;
+                    status = keyResult.message;
+                    apiKey = keyResult.key!.key; // Update local apiKey
+                    console.log("[Recording] Ready with key:", keyResult.key?.name);
+                    
+                    // CRITICAL: Push working key to Rust backend AND start audio loop!
+                    try {
+                        await invoke("test_gemini_connection", { 
+                            key: keyResult.key!.key,
+                            model: selectedModel 
+                        });
+                        console.log("[Recording] Key synced and audio loop started");
+                    } catch (e) {
+                        console.warn("[Recording] Connection test had issues, proceeding anyway:", e);
+                    }
+                }
+
                 await invoke("start_audio_capture");
                 isRecording = true;
                 recordingStartTime = new Date();
@@ -903,23 +930,25 @@ Return ONLY valid JSON, no markdown, no explanation.`;
             localStorage.setItem("gemini_model", selectedModel);
         }
         
-        // Robust Tauri detection (supports v1 and v2)
-        isRunningInTauri = typeof window !== 'undefined' && (
-            (window as any).__TAURI_INTERNALS__ !== undefined || 
-            (window as any).__TAURI__ !== undefined
-        );
-        
-        console.log("[INIT] Tauri detection:", {
-            isRunningInTauri,
-            hasTauriInternals: typeof (window as any).__TAURI_INTERNALS__ !== 'undefined',
-            hasTauriLegacy: typeof (window as any).__TAURI__ !== 'undefined'
-        });
-        
-        if (!isRunningInTauri) {
-            console.warn("[INIT] Tauri API not detected - running in browser mode");
-            status = "Web Preview Mode";
-            // Don't return early - try to set up event listeners anyway
+        // Robust Tauri detection - try actual invoke call
+        try {
+            // Try a simple invoke - if it works, we're in Tauri
+            await invoke("get_audio_devices");
+            isRunningInTauri = true;
+            console.log("[INIT] Tauri detected via successful invoke");
+        } catch (e: any) {
+            // Check if it's a "not in Tauri" error vs actual command error
+            if (e?.message?.includes("not running") || e?.message?.includes("__TAURI_INTERNALS__")) {
+                isRunningInTauri = false;
+                console.warn("[INIT] Not running in Tauri:", e.message);
+            } else {
+                // Command exists but failed for other reason - we ARE in Tauri
+                isRunningInTauri = true;
+                console.log("[INIT] Tauri detected (invoke threw non-critical error)");
+            }
         }
+        
+        console.log("[INIT] Tauri detection result:", isRunningInTauri);
 
         try {
             console.log("[INIT] Loading audio devices...");
@@ -1284,7 +1313,14 @@ Return ONLY valid JSON, no markdown, no explanation.`;
                 {:else if isProcessing}
                     <span class="badge-cyan text-xs px-2 py-1 rounded animate-pulse">PROCESSING</span>
                 {:else if isGeminiConnected}
-                    <span class="badge-success text-xs px-2 py-1 rounded flex items-center gap-1"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> AI Connected</span>
+                    <span class="badge-success text-xs px-2 py-1 rounded flex items-center gap-1">
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                        {#if keyState.keys.length > 1}
+                            Key {keyState.currentIndex + 1}/{keyState.keys.length}
+                        {:else}
+                            AI Connected
+                        {/if}
+                    </span>
                 {:else if keyState.keys.length > 0}
                     <button 
                         type="button"
@@ -1292,7 +1328,7 @@ Return ONLY valid JSON, no markdown, no explanation.`;
                         onclick={openSettings}
                     >
                         <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> 
-                        Keys Ready
+                        {keyState.keys.length} Key{keyState.keys.length > 1 ? 's' : ''} Ready
                     </button>
                 {:else}
                     <button 

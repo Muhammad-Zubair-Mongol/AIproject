@@ -31,7 +31,8 @@ const STORAGE_KEY = "gemini_api_keys_v2";
 const STATE_KEY = "key_manager_state";
 const RATE_LIMIT_COOLDOWN_MS = 60000; // 1 minute cooldown after rate limit
 const QUOTA_EXHAUSTED_COOLDOWN_MS = 3600000; // 1 hour for quota exhaustion
-const MAX_FAIL_COUNT = 3; 
+const CONNECTION_TIMEOUT_MS = 3000; // 3 second timeout for fast feedback
+const MAX_FAIL_COUNT = 3;
 
 class ApiKeyManager {
     private state: KeyManagerState = {
@@ -170,6 +171,9 @@ class ApiKeyManager {
      * Implements round-robin with smart fallback
      */
     getNextKey(): ApiKey | null {
+        // First, refresh states to clear any expired cooldowns
+        this.refreshKeyStates();
+
         if (this.state.keys.length === 0) return null;
 
         const availableKeys = this.state.keys
@@ -275,7 +279,7 @@ class ApiKeyManager {
         const isAuthError = errorCode === 401 || errorCode === 403;
 
         current.lastError = errorMessage || `Error ${errorCode}`;
-        
+
         if (isRateLimit) {
             current.rateLimited = true;
             current.rateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
@@ -309,8 +313,8 @@ class ApiKeyManager {
         const nextKey = this.getNextKey();
         if (nextKey && nextKey.id !== current.id) {
             const message = isRateLimit ? `Rate limit hit on ${current.name} – switching to ${nextKey.name}` :
-                           isQuotaExhausted ? `Quota exhausted on ${current.name} – switching to ${nextKey.name}` :
-                           `Error on ${current.name} – switching to ${nextKey.name}`;
+                isQuotaExhausted ? `Quota exhausted on ${current.name} – switching to ${nextKey.name}` :
+                    `Error on ${current.name} – switching to ${nextKey.name}`;
 
             this.notifyListeners();
             return { switched: true, newKey: nextKey, message };
@@ -338,13 +342,78 @@ class ApiKeyManager {
         if (!key.rateLimitedUntil) return false;
 
         if (Date.now() >= key.rateLimitedUntil) {
-            // Cooldown expired
+            // Cooldown expired - clear rate limit and re-enable
             key.rateLimited = false;
             key.rateLimitedUntil = null;
+            key.failCount = 0; // Reset fail count after cooldown
+            if (key.isDisabled && !key.isPrimary) {
+                key.isDisabled = false; // Re-enable after cooldown
+                console.log(`[KeyManager] ${key.name} cooldown expired - re-enabled`);
+            }
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * Refresh all key states - clear expired cooldowns and re-enable disabled keys
+     * Call this before any key operation to ensure fresh state
+     */
+    refreshKeyStates(): void {
+        const now = Date.now();
+        let changed = false;
+
+        this.state.keys.forEach(key => {
+            // Clear expired rate limits AND re-enable the key
+            if (key.rateLimitedUntil && now >= key.rateLimitedUntil) {
+                key.rateLimited = false;
+                key.rateLimitedUntil = null;
+                key.failCount = 0;
+                key.isDisabled = false; // RE-ENABLE when rate limit expires!
+                changed = true;
+                console.log(`[KeyManager] ${key.name} rate limit expired - re-enabled`);
+            }
+
+            // Clear expired quota cooldowns AND re-enable the key
+            if (key.cooldownUntil && now >= key.cooldownUntil) {
+                key.cooldownUntil = undefined;
+                key.failCount = 0;
+                key.isDisabled = false; // RE-ENABLE when quota cooldown expires!
+                changed = true;
+                console.log(`[KeyManager] ${key.name} quota cooldown expired - re-enabled`);
+            }
+
+            // Also re-enable keys that are disabled but have no active cooldowns
+            // (this catches keys that were disabled manually or by old logic)
+            if (key.isDisabled && !key.rateLimited && !key.rateLimitedUntil && !key.cooldownUntil) {
+                key.isDisabled = false;
+                key.failCount = 0;
+                changed = true;
+                console.log(`[KeyManager] ${key.name} re-enabled (no active cooldowns)`);
+            }
+        });
+
+        if (changed) {
+            this.saveState();
+            this.notifyListeners();
+        }
+    }
+
+    /**
+     * Force reset all key cooldowns (user action)
+     */
+    resetAllCooldowns(): void {
+        this.state.keys.forEach(key => {
+            key.rateLimited = false;
+            key.rateLimitedUntil = null;
+            key.cooldownUntil = undefined;
+            key.isDisabled = false;
+            key.failCount = 0;
+        });
+        this.saveState();
+        this.notifyListeners();
+        console.log("[KeyManager] All key cooldowns reset");
     }
 
     // === SETTINGS ===
@@ -383,26 +452,137 @@ class ApiKeyManager {
     }
 
     /**
-     * Test a specific API key against Gemini API
+     * SMART: Find the next working key before recording starts.
+     * Skips rate-limited and quota-exhausted keys automatically.
+     * Uses fast 3-second timeout per key.
      */
-    async testConnection(key: string): Promise<{ success: boolean; message: string }> {
+    async getNextWorkingKeyFast(): Promise<{ success: boolean; key?: ApiKey; message: string }> {
+        // First, refresh states to clear expired cooldowns and re-enable keys
+        this.refreshKeyStates();
+
+        const keys = this.state.keys.filter(k => !k.isDisabled && !this.isRateLimited(k));
+
+        if (keys.length === 0) {
+            // Check if all keys are just rate-limited (temporary)
+            const rateLimitedOnly = this.state.keys.filter(k => !k.isDisabled && this.isRateLimited(k));
+            if (rateLimitedOnly.length > 0) {
+                return { success: false, message: `All ${rateLimitedOnly.length} keys rate-limited. Wait ${Math.ceil(RATE_LIMIT_COOLDOWN_MS / 1000)}s.` };
+            }
+            return { success: false, message: "No API keys configured" };
+        }
+
+        console.log(`[KeyManager] Fast-checking ${keys.length} keys...`);
+
+        for (let i = 0; i < keys.length; i++) {
+            const k = keys[i];
+            console.log(`[KeyManager] Trying key ${i + 1}/${keys.length}: ${k.name}`);
+
+            const result = await this.testConnection(k.key);
+
+            if (result.success) {
+                // Found working key - activate it
+                k.isActive = true;
+                this.state.keys.forEach(other => { if (other.id !== k.id) other.isActive = false; });
+                this.state.currentIndex = this.state.keys.findIndex(x => x.id === k.id);
+                this.saveState();
+                this.notifyListeners();
+
+                console.log(`[KeyManager] Found working key: ${k.name}`);
+                return { success: true, key: k, message: `Connected via ${k.name}` };
+            }
+
+            // Mark failures appropriately
+            if (result.statusCode === 429) {
+                k.rateLimited = true;
+                k.rateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+                k.failCount++;
+                console.log(`[KeyManager] ${k.name} rate-limited, trying next...`);
+            } else if (result.statusCode === 403 || result.message.includes("quota")) {
+                k.cooldownUntil = Date.now() + QUOTA_EXHAUSTED_COOLDOWN_MS;
+                console.log(`[KeyManager] ${k.name} quota exhausted, skipping for 1 hour`);
+            }
+        }
+
+        return { success: false, message: "All keys failed - check quota/rate limits" };
+    }
+
+    /**
+     * SMART: Rotate to next key after each API call (for load distribution)
+     */
+    rotateToNextKey(): ApiKey | null {
+        const available = this.state.keys.filter(k => !k.isDisabled && !this.isRateLimited(k));
+
+        if (available.length <= 1) {
+            return available[0] || null; // No rotation possible
+        }
+
+        // Move to next available key
+        const currentIdx = this.state.currentIndex;
+        let nextIdx = (currentIdx + 1) % this.state.keys.length;
+
+        // Find next available (skip disabled/rate-limited)
+        for (let i = 0; i < this.state.keys.length; i++) {
+            const candidate = this.state.keys[nextIdx];
+            if (!candidate.isDisabled && !this.isRateLimited(candidate)) {
+                this.state.currentIndex = nextIdx;
+                candidate.isActive = true;
+                this.state.keys.forEach((k, idx) => { if (idx !== nextIdx) k.isActive = false; });
+                this.saveState();
+                this.notifyListeners();
+
+                console.log(`[KeyManager] Rotated to: ${candidate.name} (${nextIdx + 1}/${this.state.keys.length})`);
+                return candidate;
+            }
+            nextIdx = (nextIdx + 1) % this.state.keys.length;
+        }
+
+        return null;
+    }
+
+    /**
+     * Test a specific API key against Gemini API (with 3s timeout for fast feedback)
+     */
+    async testConnection(key: string): Promise<{ success: boolean; message: string; statusCode?: number }> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
+
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+            console.log(`[KeyManager] Testing connection (timeout: ${CONNECTION_TIMEOUT_MS}ms)...`);
+
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${key}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: "Hello" }] }]
-                })
+                    contents: [{ parts: [{ text: "Hi" }] }]
+                }),
+                signal: controller.signal
             });
 
+            clearTimeout(timeoutId);
+
             if (response.ok) {
-                return { success: true, message: "Connection successful" };
+                console.log("[KeyManager] Connection successful!");
+                return { success: true, message: "Connected", statusCode: 200 };
+            } else if (response.status === 429) {
+                console.warn("[KeyManager] Rate limited (429) - will try next key");
+                return { success: false, message: "Rate limited", statusCode: 429 };
+            } else if (response.status === 403) {
+                console.error("[KeyManager] Quota exhausted (403)");
+                return { success: false, message: "Quota exhausted", statusCode: 403 };
             } else {
-                const error = await response.json();
-                return { success: false, message: error.error?.message || "Invalid API key" };
+                const error = await response.json().catch(() => ({}));
+                const msg = error.error?.message || `HTTP ${response.status}`;
+                console.warn(`[KeyManager] Failed: ${msg}`);
+                return { success: false, message: msg, statusCode: response.status };
             }
-        } catch (e) {
-            return { success: false, message: "Network error or API unreachable" };
+        } catch (e: any) {
+            clearTimeout(timeoutId);
+            if (e.name === 'AbortError') {
+                console.error(`[KeyManager] Timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`);
+                return { success: false, message: `Timeout (${CONNECTION_TIMEOUT_MS / 1000}s)` };
+            }
+            console.error("[KeyManager] Network error:", e.message);
+            return { success: false, message: "Network error" };
         }
     }
 

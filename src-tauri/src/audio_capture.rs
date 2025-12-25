@@ -26,7 +26,7 @@ impl Default for AudioState {
             stream_control: Mutex::new(None),
             audio_tx: Mutex::new(None),
             current_volume: Arc::new(Mutex::new(0.0)),
-            capture_mode: Mutex::new(CaptureMode::MicOnly),
+            capture_mode: Mutex::new(CaptureMode::Both), // Default to Both (Mic + System)
         }
     }
 }

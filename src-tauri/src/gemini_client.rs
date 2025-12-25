@@ -271,11 +271,25 @@ pub async fn test_gemini_connection(
         .send().await 
     {
         Ok(r) => {
+            let status = r.status();
             let t = r.text().await.unwrap_or_default();
-            if t.contains("error") {
-                let _ = app.emit("god:status", "API Error");
-                return Err("API error".into());
+            
+            if status.as_u16() == 429 {
+                println!("[GEMINI] Rate limited (429)");
+                let _ = app.emit("god:status", "Rate limited");
+                return Err("Rate limited".into());
+            } else if status.as_u16() == 403 {
+                println!("[GEMINI] Quota exhausted (403)");
+                let _ = app.emit("god:status", "Quota exhausted");
+                return Err("Quota exhausted".into());
+            } else if !status.is_success() {
+                println!("[GEMINI] HTTP error: {}", status);
+                let _ = app.emit("god:status", format!("HTTP {}", status));
+                return Err(format!("HTTP {}", status));
             }
+            
+            // Success - connected
+            println!("[GEMINI] Connection test passed");
             *state.is_connected.lock().unwrap() = true;
             let _ = app.emit("god:status", "Connected ✓");
         }
