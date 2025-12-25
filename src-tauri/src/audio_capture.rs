@@ -192,24 +192,97 @@ pub fn start_audio_capture(state: tauri::State<'_, AudioState>) -> Result<String
         // === SYSTEM AUDIO (WASAPI LOOPBACK) - Windows Only ===
         #[cfg(target_os = "windows")]
         let loopback_stream = if capture_mode == CaptureMode::SystemOnly || capture_mode == CaptureMode::Both {
-            // Try to get WASAPI host for loopback
             use cpal::available_hosts;
             
+            println!("[AUDIO] Attempting system audio capture...");
+            
+            // Try WASAPI host first
             let wasapi_host = available_hosts()
                 .into_iter()
                 .find(|h| h.name().contains("WASAPI"))
                 .and_then(|id| cpal::host_from_id(id).ok());
             
-            if let Some(host) = wasapi_host {
-                println!("[AUDIO] Using WASAPI for system audio");
+            let host = wasapi_host.unwrap_or_else(|| {
+                println!("[AUDIO] WASAPI not available, using default host");
+                cpal::default_host()
+            });
+            
+            // Strategy 1: Try loopback from default output device
+            let loopback_result = host.default_output_device().and_then(|device| {
+                let name = device.name().unwrap_or_default();
+                println!("[AUDIO] Trying loopback on output device: {}", name);
                 
-                // Get the default output device for loopback
-                if let Some(device) = host.default_output_device() {
-                    let name = device.name().unwrap_or_default();
-                    println!("[AUDIO] Loopback device: {}", name);
+                device.default_output_config().ok().and_then(|config| {
+                    let channels = config.channels();
+                    let sample_rate = config.sample_rate().0;
                     
-                    // On WASAPI, we can use the output device for loopback input
-                    if let Ok(config) = device.default_output_config() {
+                    let tx = audio_tx.clone();
+                    let buf = buffer.clone();
+                    let sil = silence_count.clone();
+                    let vol = volume.clone();
+                    
+                    device.build_input_stream(
+                        &config.into(),
+                        move |data: &[f32], _| {
+                            if data.is_empty() { return; }
+                            
+                            let mono = to_mono(data, channels);
+                            let resampled = decimate(mono, sample_rate, TARGET_SAMPLE_RATE);
+                            
+                            let rms = calculate_rms(&resampled);
+                            if let Ok(mut v) = vol.lock() { *v = rms; }
+                            
+                            if let Ok(mut count) = sil.lock() {
+                                if rms < SILENCE_THRESHOLD {
+                                    *count += 1;
+                                    if *count > SILENCE_SKIP_CHUNKS { return; }
+                                } else {
+                                    *count = 0;
+                                }
+                            }
+                            
+                            if let Ok(mut b) = buf.lock() {
+                                b.extend(resampled);
+                                while b.len() >= MICRO_CHUNK_SAMPLES {
+                                    let chunk: Vec<f32> = b.drain(..MICRO_CHUNK_SAMPLES).collect();
+                                    if let Some(ref tx) = tx {
+                                        let _ = tx.send(chunk);
+                                    }
+                                }
+                            }
+                        },
+                        |e| eprintln!("[AUDIO] Loopback stream error: {}", e),
+                        None
+                    ).ok()
+                })
+            });
+            
+            if loopback_result.is_some() {
+                println!("[AUDIO] ✓ WASAPI loopback stream created successfully");
+                loopback_result
+            } else {
+                // Strategy 2: Try finding Stereo Mix or similar virtual device
+                println!("[AUDIO] Loopback failed, searching for Stereo Mix...");
+                
+                let stereo_mix = host.input_devices().ok().and_then(|devices| {
+                    devices.into_iter().find(|d| {
+                        if let Ok(name) = d.name() {
+                            let name_lower = name.to_lowercase();
+                            name_lower.contains("stereo mix") ||
+                            name_lower.contains("what u hear") ||
+                            name_lower.contains("wave out") ||
+                            name_lower.contains("loopback")
+                        } else {
+                            false
+                        }
+                    })
+                });
+                
+                if let Some(device) = stereo_mix {
+                    let name = device.name().unwrap_or_default();
+                    println!("[AUDIO] Found virtual capture device: {}", name);
+                    
+                    device.default_input_config().ok().and_then(|config| {
                         let channels = config.channels();
                         let sample_rate = config.sample_rate().0;
                         
@@ -218,8 +291,7 @@ pub fn start_audio_capture(state: tauri::State<'_, AudioState>) -> Result<String
                         let sil = silence_count.clone();
                         let vol = volume.clone();
                         
-                        // Try to build input stream from output device (loopback)
-                        let stream = device.build_input_stream(
+                        device.build_input_stream(
                             &config.into(),
                             move |data: &[f32], _| {
                                 if data.is_empty() { return; }
@@ -249,26 +321,19 @@ pub fn start_audio_capture(state: tauri::State<'_, AudioState>) -> Result<String
                                     }
                                 }
                             },
-                            |e| eprintln!("[AUDIO] Loopback error: {}", e),
+                            |e| eprintln!("[AUDIO] Stereo Mix error: {}", e),
                             None
-                        );
-                        
-                        match stream {
-                            Ok(s) => {
-                                println!("[AUDIO] ✓ WASAPI loopback stream created");
-                                Some(s)
-                            }
-                            Err(e) => {
-                                eprintln!("[AUDIO] ✗ Failed to create loopback: {}", e);
-                                eprintln!("[AUDIO] Note: Try enabling 'Stereo Mix' in Windows Sound settings");
-                                None
-                            }
-                        }
-                    } else { None }
-                } else { None }
-            } else {
-                eprintln!("[AUDIO] WASAPI host not available");
-                None
+                        ).ok()
+                    })
+                } else {
+                    eprintln!("[AUDIO] ✗ System audio capture not available");
+                    eprintln!("[AUDIO] To enable system audio capture:");
+                    eprintln!("  1. Right-click Sound icon in system tray → Sounds");
+                    eprintln!("  2. Go to Recording tab");
+                    eprintln!("  3. Right-click → Show Disabled Devices");
+                    eprintln!("  4. Enable 'Stereo Mix' if available");
+                    None
+                }
             }
         } else { None };
         

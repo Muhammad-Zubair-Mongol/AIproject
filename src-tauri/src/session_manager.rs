@@ -19,6 +19,26 @@ pub struct SessionData {
     pub metadata: SessionMetadata,
     #[serde(default)]
     pub summary: Option<SessionSummary>,
+    #[serde(default)]
+    pub psychosomatic: Option<PsychosomaticState>,
+    #[serde(default)]
+    pub insights: Option<ExtractedInsights>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PsychosomaticState {
+    pub stress: f32,
+    pub engagement: f32,
+    pub urgency: f32,
+    pub clarity: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ExtractedInsights {
+    pub topics: Vec<String>,
+    pub decisions: Vec<String>,
+    pub action_items: Vec<String>,
+    pub key_points: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -92,6 +112,8 @@ impl SessionData {
                 tags: Vec::new(),
             },
             summary: None,
+            psychosomatic: None,
+            insights: None,
         }
     }
 

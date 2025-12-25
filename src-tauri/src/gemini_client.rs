@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex as StdMutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, interval, timeout, Instant, sleep};
 use crossbeam_channel::Receiver;
@@ -22,8 +22,9 @@ const RATE_LIMIT_CODES: [&str; 3] = ["429", "RESOURCE_EXHAUSTED", "rate"];
 const MIN_SPEECH_SECS: f32 = 3.0;              // Minimum 3 seconds of speech
 const SILENCE_TIMEOUT_SECS: f32 = 2.0;         // 2 seconds silence = end
 const MAX_BATCH_SECS: f32 = 15.0;              // Max 15 seconds per batch
-const SPEECH_THRESHOLD: f32 = 0.02;
-const SILENCE_THRESHOLD: f32 = 0.01;
+const SPEECH_THRESHOLD: f32 = 0.001;           // 0.001 to resolve "waiting for speech" (was 0.02)
+const SILENCE_THRESHOLD: f32 = 0.0005;         // Even lower for silence
+
 
 pub struct GeminiState {
     pub audio_rx: StdMutex<Option<Receiver<Vec<f32>>>>,
@@ -284,25 +285,29 @@ pub async fn test_gemini_connection(
         }
     }
     
-    // Start smart audio loop
+    // Start smart audio loop if not already running
     let audio_rx = state.audio_rx.lock().unwrap().take();
     if let Some(rx) = audio_rx {
         let app = app.clone();
-        let key = key.clone();
-        let model = m.clone();
         tokio::spawn(async move {
-            smart_audio_loop(rx, app, key, model).await;
+            smart_audio_loop(rx, app).await;
         });
     }
     
     Ok(format!("Connected to {}", m))
 }
 
+#[tauri::command]
+pub fn update_gemini_key(state: tauri::State<'_, GeminiState>, key: String) -> Result<(), String> {
+    *state.api_key.lock().unwrap() = Some(key);
+    Ok(())
+}
+
 // ============================================================================
 // Smart Audio Loop with Rate Limiting
 // ============================================================================
 
-async fn smart_audio_loop(rx: Receiver<Vec<f32>>, app: AppHandle, key: String, model: String) {
+async fn smart_audio_loop(rx: Receiver<Vec<f32>>, app: AppHandle) {
     println!("[AUDIO] Loop started - Min {}s speech, {}s silence timeout", 
              MIN_SPEECH_SECS, SILENCE_TIMEOUT_SECS);
     
@@ -374,6 +379,22 @@ async fn smart_audio_loop(rx: Receiver<Vec<f32>>, app: AppHandle, key: String, m
                 speech_start = None;
                 last_speech = None;
                 
+                // Get current key and model from state
+                let (key, model) = {
+                    let state = app.state::<GeminiState>();
+                    let k: String = state.api_key.lock().unwrap().clone().unwrap_or_default();
+                    let m = state.selected_model.lock().unwrap().clone();
+                    (k, m)
+                };
+
+                if key.is_empty() {
+                    println!("[GEMINI] ✗ Error: No API key configured");
+                    let _ = app.emit("god:status", "Error: No API key");
+                    let _ = app.emit("god:api_error", serde_json::json!({"code": 401, "message": "No API key configured"}));
+                    processing = false;
+                    continue;
+                }
+                
                 match call_gemini_with_backoff(&key, &model, &audio, &mut backoff, &mut last_request).await {
                     Ok(response) => {
                         println!("[GEMINI] ✓ Response received");
@@ -383,6 +404,14 @@ async fn smart_audio_loop(rx: Receiver<Vec<f32>>, app: AppHandle, key: String, m
                     Err(e) => {
                         println!("[GEMINI] ✗ Error: {}", e);
                         let _ = app.emit("god:status", format!("Error: {}. Waiting...", e));
+                        
+                        // Emit error for frontend rotation
+                        let code = if e.contains("429") || e.contains("Rate limit") { 429 } else { 500 };
+                        let _ = app.emit("god:api_error", serde_json::json!({
+                            "code": code,
+                            "message": e
+                        }));
+
                         // Extra wait on error
                         sleep(Duration::from_secs(3)).await;
                         let _ = app.emit("god:status", "Listening...");
