@@ -134,9 +134,9 @@
 </script>
 
 {#if isRecording}
-    <div class="fixed top-0 left-0 right-0 z-50 animate-slideDown">
+    <div class="fixed top-0 left-0 right-0 z-50 pointer-events-none animate-slideDown">
         <!-- Main Recording Banner -->
-        <div class="bg-gradient-to-r from-red-900/95 via-red-800/95 to-red-900/95 border-b border-red-500/50 backdrop-blur-sm shadow-lg shadow-red-500/20">
+        <div class="bg-gradient-to-r from-red-900/95 via-red-800/95 to-red-900/95 border-b border-red-500/50 backdrop-blur-sm shadow-lg shadow-red-500/20 pointer-events-auto">
             <div class="max-w-5xl mx-auto px-6 py-4">
                 <div class="flex items-center justify-between gap-4">
                     <!-- Left: Recording Indicator + Voice Status -->

@@ -258,7 +258,10 @@
         // Add global mouse handlers
         window.addEventListener('mousemove', handleGlobalMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
-        svgElement.addEventListener('wheel', handleZoom, { passive: false });
+        // Only add wheel listener if svg element exists (won't exist if nodes.length === 0)
+        if (svgElement) {
+            svgElement.addEventListener('wheel', handleZoom, { passive: false });
+        }
     });
     
     onDestroy(() => {

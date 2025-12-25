@@ -903,42 +903,64 @@ Return ONLY valid JSON, no markdown, no explanation.`;
             localStorage.setItem("gemini_model", selectedModel);
         }
         
-        isRunningInTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+        // Robust Tauri detection (supports v1 and v2)
+        isRunningInTauri = typeof window !== 'undefined' && (
+            (window as any).__TAURI_INTERNALS__ !== undefined || 
+            (window as any).__TAURI__ !== undefined
+        );
+        
+        console.log("[INIT] Tauri detection:", {
+            isRunningInTauri,
+            hasTauriInternals: typeof (window as any).__TAURI_INTERNALS__ !== 'undefined',
+            hasTauriLegacy: typeof (window as any).__TAURI__ !== 'undefined'
+        });
         
         if (!isRunningInTauri) {
-            console.warn("Tauri API not detected.");
+            console.warn("[INIT] Tauri API not detected - running in browser mode");
             status = "Web Preview Mode";
-            return;
+            // Don't return early - try to set up event listeners anyway
         }
 
         try {
+            console.log("[INIT] Loading audio devices...");
             await loadDevices();
             
             // Load API keys and settings
+            console.log("[INIT] Loading API keys...");
             loadApiKeysFromStorage();
             
             // NEW: Automated Connection on Startup
-            status = "Initializing Intelligence...";
-            const connectionResult = await keyManager.validateOnStartup();
-            if (connectionResult.success) {
-                isGeminiConnected = true;
-                apiKey = connectionResult.key?.key || "";
-                status = "Connected to Intelligence Engine";
-                console.log("[STARTUP] Auto-connected successfully");
-                // Sync with backend
-                connectGemini(); 
+            if (isRunningInTauri) {
+                status = "Initializing Intelligence...";
+                console.log("[INIT] Running key validation...");
+                const connectionResult = await keyManager.validateOnStartup();
+                if (connectionResult.success) {
+                    isGeminiConnected = true;
+                    apiKey = connectionResult.key?.key || "";
+                    status = "Connected to Intelligence Engine";
+                    console.log("[STARTUP] Auto-connected successfully");
+                    // Sync with backend
+                    connectGemini(); 
+                } else {
+                    isGeminiConnected = false;
+                    status = "Offline - Click settings to add API key";
+                    console.warn("[STARTUP] Auto-connection failed:", connectionResult.message);
+                }
             } else {
-                isGeminiConnected = false;
-                status = "Offline - Click settings to add API key";
-                console.warn("[STARTUP] Auto-connection failed:", connectionResult.message);
+                status = "Browser Mode - Settings disabled";
             }
 
             // Load past sessions and restore latest state
+            console.log("[INIT] Loading initial data...");
             await loadInitialData();
             
+            console.log("[INIT] Setting up subscriptions...");
             setupKeyManagerSubscription();
             setupVADSubscription();
-            unlistenBackendErrors = await setupBackendEventListeners();
+            
+            if (isRunningInTauri) {
+                console.log("[INIT] Setting up Tauri event listeners...");
+                unlistenBackendErrors = await setupBackendEventListeners();
 
             unlistenStatus = await listen("god:status", (event) => {
                 const s = event.payload as string;
@@ -1049,6 +1071,7 @@ Return ONLY valid JSON, no markdown, no explanation.`;
             await listen("tray:stop", () => {
                 if (isRecording) toggleCapture();
             });
+            } // Close if (isRunningInTauri)
         } catch (error) {
             console.error("Failed to initialize Tauri listeners:", error);
             status = "Tauri Init Error";
@@ -1263,9 +1286,22 @@ Return ONLY valid JSON, no markdown, no explanation.`;
                 {:else if isGeminiConnected}
                     <span class="badge-success text-xs px-2 py-1 rounded flex items-center gap-1"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> AI Connected</span>
                 {:else if keyState.keys.length > 0}
-                    <span class="badge-cyan text-xs px-2 py-1 rounded cursor-pointer flex items-center gap-1" onclick={openSettings}><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> Keys Ready</span>
+                    <button 
+                        type="button"
+                        class="badge-cyan text-xs px-2 py-1 rounded cursor-pointer flex items-center gap-1 border-0" 
+                        onclick={openSettings}
+                    >
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> 
+                        Keys Ready
+                    </button>
                 {:else}
-                    <span class="badge-warning text-xs px-2 py-1 rounded cursor-pointer" onclick={openSettings}>Setup</span>
+                    <button 
+                        type="button"
+                        class="badge-warning text-xs px-2 py-1 rounded cursor-pointer border-0" 
+                        onclick={openSettings}
+                    >
+                        Setup
+                    </button>
                 {/if}
             </div>
 
